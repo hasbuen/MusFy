@@ -2,7 +2,7 @@
   "name": "frontend-musfy",
   "private": true,
   "version": "0.0.0",
-  "description": "MusFy desktop player and local media server",
+  "description": "MusFy desktop player with library sync, mini player, tray mode, video playback, and GitHub-powered updates",
   "author": "MusFy",
   "repository": {
     "type": "git",

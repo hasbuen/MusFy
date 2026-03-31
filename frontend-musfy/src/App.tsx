@@ -170,6 +170,7 @@ interface DesktopUpdateStatus {
   releaseName?: string | null;
   releaseNotes?: string | null;
   releaseDate?: string | null;
+  releaseUrl?: string | null;
 }
 
 interface DeviceSession {
@@ -521,7 +522,8 @@ export default function App() {
     progress: null,
     releaseName: null,
     releaseNotes: null,
-    releaseDate: null
+    releaseDate: null,
+    releaseUrl: null
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -562,6 +564,10 @@ export default function App() {
       if (!window.musfyDesktop) return false;
       await window.musfyDesktop.quitApp();
       return true;
+    },
+    openExternal: async (targetUrl: string) => {
+      if (!window.musfyDesktop?.openExternal) return false;
+      return window.musfyDesktop.openExternal(targetUrl);
     }
   };
 
@@ -1167,6 +1173,8 @@ export default function App() {
       ? 'Pronto para instalar'
       : desktopUpdateStatus.state === 'downloading'
         ? 'Baixando'
+        : desktopUpdateStatus.state === 'available'
+          ? 'Nova tag'
         : desktopUpdateStatus.state === 'checking'
           ? 'Verificando'
           : desktopUpdateStatus.state === 'unconfigured'
@@ -1306,10 +1314,10 @@ export default function App() {
               <div className="rounded-[24px] border border-white/10 bg-[#0d0d0d] p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Feed de atualização</p>
+                    <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Atualizações do GitHub</p>
                     <p className="mt-3 text-base font-semibold text-white">Versão atual {desktopUpdateStatus.currentVersion}</p>
                     <p className="mt-2 text-sm leading-6 text-gray-400">
-                      O MusFy usa um canal embutido no GitHub Releases para verificar novas versões sem o usuário precisar procurar ou configurar links.
+                      O MusFy cruza o feed automático com a última tag publicada no GitHub Releases para avisar quando entrar uma atualização nova.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-gray-300">
@@ -1327,6 +1335,16 @@ export default function App() {
                   </p>
                 </div>
 
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Último release detectado</p>
+                  <p className="mt-3 break-all text-sm font-semibold text-white">
+                    {desktopUpdateStatus.releaseUrl || 'URL do release ainda indisponível'}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-gray-500">
+                    Se entrar uma tag nova no repositório, o app compara a versão atual com esse release e dispara o aviso automaticamente.
+                  </p>
+                </div>
+
                 <div className="mt-4 flex flex-wrap gap-3">
                   <button
                     onClick={() => void triggerDesktopUpdateCheck()}
@@ -1334,6 +1352,14 @@ export default function App() {
                   >
                     Verificar atualizações
                   </button>
+                  {desktopUpdateStatus.releaseUrl ? (
+                    <button
+                      onClick={() => void desktopApi.openExternal(desktopUpdateStatus.releaseUrl || '')}
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-gray-200 hover:bg-white/[0.08]"
+                    >
+                      Abrir release
+                    </button>
+                  ) : null}
                   {desktopUpdateStatus.state === 'downloaded' ? (
                     <button
                       onClick={() => void installDesktopUpdate()}
@@ -1347,8 +1373,10 @@ export default function App() {
                 <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
                   <p className="text-sm font-semibold text-white">
                     {desktopUpdateStatus.availableVersion
-                      ? `Nova versão: ${desktopUpdateStatus.availableVersion}`
-                      : 'Nenhuma nova versão detectada ainda'}
+                      ? `Nova versão detectada: ${desktopUpdateStatus.availableVersion}`
+                      : desktopUpdateStatus.releaseName
+                        ? 'Último release confirmado'
+                        : 'Nenhuma nova versão detectada ainda'}
                   </p>
                   <p className="mt-2 text-sm leading-6 text-gray-400">{desktopUpdateStatus.message}</p>
                   {desktopUpdateStatus.progress !== null && desktopUpdateStatus.progress !== undefined ? (
@@ -2474,12 +2502,12 @@ export default function App() {
         className="flex h-full w-full flex-col overflow-hidden rounded-[28px] border border-white/10 bg-gradient-to-br from-[#121212] to-[#0a0a0a] shadow-2xl"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <div className="min-w-0">
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div className="min-w-0 flex-1">
             <p className="truncate font-bold">{getDisplayTitle(currentSong) || 'Nenhum video'}</p>
             <p className="truncate text-xs text-gray-400">{getSongSubtitle(currentSong)}</p>
           </div>
-          <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className="flex shrink-0 items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             <button onClick={() => void desktopApi.showMain()} className="rounded-xl bg-white/5 px-3 py-2 text-xs hover:bg-white/10">
               Abrir
             </button>
@@ -2489,7 +2517,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="relative flex-1 bg-black" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="relative min-h-0 flex-1 bg-black" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <video
             ref={videoRef}
             preload="metadata"
@@ -2501,36 +2529,45 @@ export default function App() {
           />
         </div>
 
-        <div className="flex items-center gap-3 px-4 py-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <button onClick={playPrevious} className="flex h-9 w-9 items-center justify-center rounded-full text-gray-300 hover:bg-white/10">
-            <SkipBack size={16} />
-          </button>
-          <button onClick={togglePlay} className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-black shadow-lg">
-            {isPlaying ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}
-          </button>
-          <button onClick={playNext} className="flex h-9 w-9 items-center justify-center rounded-full text-gray-300 hover:bg-white/10">
-            <SkipForward size={16} />
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={duration || 0}
-            step={0.1}
-            value={currentTime}
-            onChange={(e) =>
-              channel.postMessage({
-                type: 'COMMAND',
-                payload: { type: 'SEEK', time: Number(e.target.value) }
-              })
-            }
-            className="min-w-0 flex-1 accent-green-500"
-          />
-          <button
-            onClick={() => void runPlayerCommand({ type: 'SET_PLAYBACK_MODE', mode: 'audio' })}
-            className="rounded-xl border border-white/10 px-3 py-2 text-xs hover:bg-white/10"
-          >
-            Audio
-          </button>
+        <div className="border-t border-white/10 px-4 py-3" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <button onClick={playPrevious} className="flex h-9 w-9 items-center justify-center rounded-full text-gray-300 hover:bg-white/10">
+                <SkipBack size={16} />
+              </button>
+              <button onClick={togglePlay} className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-black shadow-lg">
+                {isPlaying ? <Pause size={18} /> : <Play size={18} fill="currentColor" />}
+              </button>
+              <button onClick={playNext} className="flex h-9 w-9 items-center justify-center rounded-full text-gray-300 hover:bg-white/10">
+                <SkipForward size={16} />
+              </button>
+            </div>
+            <button
+              onClick={() => void runPlayerCommand({ type: 'SET_PLAYBACK_MODE', mode: 'audio' })}
+              className="ml-auto rounded-xl border border-white/10 px-3 py-2 text-xs hover:bg-white/10"
+            >
+              Ouvir audio
+            </button>
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+            <span className="w-12 text-right text-[11px] text-gray-500">{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.1}
+              value={currentTime}
+              onChange={(e) =>
+                channel.postMessage({
+                  type: 'COMMAND',
+                  payload: { type: 'SEEK', time: Number(e.target.value) }
+                })
+              }
+              className="min-w-0 flex-1 accent-green-500"
+            />
+            <span className="w-12 text-[11px] text-gray-500">{formatTime(duration)}</span>
+          </div>
         </div>
       </div>
     </div>

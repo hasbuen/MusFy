@@ -33,6 +33,7 @@ declare global {
         releaseName?: string | null;
         releaseNotes?: string | null;
         releaseDate?: string | null;
+        releaseUrl?: string | null;
       }>;
       checkForUpdates: () => Promise<{
         state: 'idle' | 'disabled' | 'unconfigured' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
@@ -44,8 +45,10 @@ declare global {
         releaseName?: string | null;
         releaseNotes?: string | null;
         releaseDate?: string | null;
+        releaseUrl?: string | null;
       }>;
       installUpdate: () => Promise<boolean>;
+      openExternal: (targetUrl: string) => Promise<boolean>;
       onUpdateStatus: (listener: (status: {
         state: 'idle' | 'disabled' | 'unconfigured' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
         message: string;
@@ -56,6 +59,7 @@ declare global {
         releaseName?: string | null;
         releaseNotes?: string | null;
         releaseDate?: string | null;
+        releaseUrl?: string | null;
       }) => void) => () => void;
       updatePreferences: (patch: {
         showSplash?: boolean;

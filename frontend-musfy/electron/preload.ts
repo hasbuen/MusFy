@@ -14,6 +14,7 @@ const musfyDesktop = {
   getUpdateStatus: () => ipcRenderer.invoke('app:get-update-status'),
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('app:install-update'),
+  openExternal: (targetUrl: string) => ipcRenderer.invoke('app:open-external', targetUrl),
   onUpdateStatus: (listener: (status: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: unknown) => listener(status);
     ipcRenderer.on('app:update-status', handler);

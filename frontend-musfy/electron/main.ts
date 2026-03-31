@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import type { UpdateInfo } from 'builder-util-runtime';
 import { MusfyServiceController, getLocalNetworkAddresses } from './service-controller';
@@ -24,10 +25,12 @@ const WINDOWS_SERVICE_NAME = 'MusFyHostService';
 const GITHUB_UPDATE_OWNER = 'hasbuen';
 const GITHUB_UPDATE_REPO = 'Projects';
 const DEFAULT_UPDATE_FEED_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest/download`;
+const DEFAULT_GITHUB_RELEASES_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
+const DEFAULT_GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 const MINI_PLAYER_COMPACT = { width: 560, height: 168 };
-const MINI_PLAYER_VIDEO = { width: 720, height: 520 };
+const MINI_PLAYER_VIDEO = { width: 860, height: 620 };
 const MIN_SPLASH_MS = 1400;
 const MAX_SPLASH_MS = 9000;
 const isDev = !app.isPackaged;
@@ -59,6 +62,15 @@ type UpdateStatus = {
   releaseName?: string | null;
   releaseNotes?: string | null;
   releaseDate?: string | null;
+  releaseUrl?: string | null;
+};
+
+type GitHubReleaseSummary = {
+  version: string;
+  releaseName: string | null;
+  releaseNotes: string | null;
+  releaseDate: string | null;
+  releaseUrl: string | null;
 };
 
 const defaultPreferences: AppPreferences = {
@@ -78,10 +90,12 @@ let updateStatus: UpdateStatus = {
   progress: null,
   releaseName: null,
   releaseNotes: null,
-  releaseDate: null
+  releaseDate: null,
+  releaseUrl: null
 };
 let autoUpdaterListenersBound = false;
 let autoUpdateInterval: NodeJS.Timeout | null = null;
+let lastNotifiedReleaseKey: string | null = null;
 
 function log(...args: unknown[]) {
   console.log('[electron-main]', ...args);
@@ -148,6 +162,47 @@ function getConfiguredUpdateFeedUrl() {
   return DEFAULT_UPDATE_FEED_URL;
 }
 
+function getDefaultReleaseUrl() {
+  return DEFAULT_GITHUB_RELEASES_URL;
+}
+
+function normalizeVersionLabel(value: string | null | undefined) {
+  return String(value || '').trim().replace(/^v/i, '');
+}
+
+function parseVersionParts(value: string | null | undefined) {
+  const normalized = normalizeVersionLabel(value);
+  const stable = normalized.split('-')[0];
+  if (!stable || !/^\d+(\.\d+){0,3}$/.test(stable)) {
+    return null;
+  }
+
+  return stable.split('.').map((part) => Number(part));
+}
+
+function compareVersions(left: string | null | undefined, right: string | null | undefined) {
+  const leftParts = parseVersionParts(left);
+  const rightParts = parseVersionParts(right);
+
+  if (!leftParts || !rightParts) {
+    return normalizeVersionLabel(left).localeCompare(normalizeVersionLabel(right), undefined, { numeric: true });
+  }
+
+  const maxLength = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const delta = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+
+  return 0;
+}
+
+function isNewerVersion(candidate: string | null | undefined, current: string | null | undefined) {
+  return compareVersions(candidate, current) > 0;
+}
+
 function normalizeAutoUpdateErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '').trim();
   const lowered = message.toLowerCase();
@@ -175,6 +230,15 @@ function notifyUpdate(title: string, body: string) {
   } catch (error) {
     log('Falha ao exibir notificacao de atualizacao:', error);
   }
+}
+
+function notifyReleaseOnce(key: string, title: string, body: string) {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) return;
+  if (lastNotifiedReleaseKey === normalizedKey) return;
+
+  lastNotifiedReleaseKey = normalizedKey;
+  notifyUpdate(title, body);
 }
 
 function formatReleaseNotesForStatus(info: UpdateInfo) {
@@ -205,6 +269,72 @@ function getUpdateMetadata(info: UpdateInfo): Pick<UpdateStatus, 'availableVersi
     releaseNotes: formatReleaseNotesForStatus(info),
     releaseDate: info.releaseDate || null
   };
+}
+
+async function fetchLatestGitHubRelease() {
+  try {
+    const response = await fetch(DEFAULT_GITHUB_RELEASES_API_URL, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'MusFy Desktop'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`GitHub release API ${response.status}`);
+    }
+
+    const release = (await response.json()) as Record<string, unknown>;
+    const version = normalizeVersionLabel(String(release.tag_name || release.name || ''));
+    if (!version) {
+      return null;
+    }
+
+    return {
+      version,
+      releaseName: String(release.name || `MusFy ${version}`).trim() || null,
+      releaseNotes: String(release.body || '').trim() || null,
+      releaseDate: String(release.published_at || release.created_at || '').trim() || null,
+      releaseUrl: String(release.html_url || getDefaultReleaseUrl()).trim() || getDefaultReleaseUrl()
+    } satisfies GitHubReleaseSummary;
+  } catch (error) {
+    log('Falha ao consultar latest release via GitHub API:', error);
+    return null;
+  }
+}
+
+function applyGitHubReleaseMetadata(release: GitHubReleaseSummary, state: UpdateState, message: string) {
+  setUpdateStatus({
+    state,
+    message,
+    availableVersion: state === 'idle' || state === 'error' ? null : release.version,
+    progress: null,
+    releaseName: release.releaseName,
+    releaseNotes: release.releaseNotes,
+    releaseDate: release.releaseDate,
+    releaseUrl: release.releaseUrl
+  });
+}
+
+function applyGitHubReleaseProbe(release: GitHubReleaseSummary, reason: 'latest-tag' | 'fallback-error') {
+  if (!isNewerVersion(release.version, app.getVersion())) {
+    return false;
+  }
+
+  const message =
+    reason === 'fallback-error'
+      ? `Nova tag detectada no GitHub: v${release.version}. O pacote automático ainda não pôde ser confirmado, mas a atualização já foi publicada.`
+      : `Nova tag detectada no GitHub: v${release.version}. O MusFy avisará assim que a atualização terminar de baixar.`;
+
+  applyGitHubReleaseMetadata(release, 'available', message);
+  notifyReleaseOnce(
+    `github-tag:${release.version}`,
+    'Nova atualização do MusFy',
+    release.releaseName
+      ? `${release.releaseName} já foi publicada no GitHub Releases.`
+      : `A versão ${release.version} já foi publicada no GitHub Releases.`
+  );
+  return true;
 }
 
 function scheduleAutoUpdateChecks() {
@@ -254,7 +384,8 @@ function bindAutoUpdaterListeners() {
       progress: null,
       releaseName: null,
       releaseNotes: null,
-      releaseDate: null
+      releaseDate: null,
+      releaseUrl: null
     });
   });
 
@@ -264,9 +395,11 @@ function bindAutoUpdaterListeners() {
       state: 'available',
       message: `Nova versÃ£o encontrada: ${info.version}. Baixando em segundo plano...`,
       progress: 0,
+      releaseUrl: getDefaultReleaseUrl(),
       ...metadata
     });
-    notifyUpdate(
+    notifyReleaseOnce(
+      `available:${normalizeVersionLabel(info.version)}`,
       'Nova atualizaÃ§Ã£o do MusFy',
       metadata.releaseName
         ? `${metadata.releaseName} estÃ¡ disponÃ­vel e serÃ¡ baixada em segundo plano.`
@@ -282,7 +415,8 @@ function bindAutoUpdaterListeners() {
       progress: null,
       releaseName: null,
       releaseNotes: null,
-      releaseDate: null
+      releaseDate: null,
+      releaseUrl: getDefaultReleaseUrl()
     });
   });
 
@@ -300,9 +434,11 @@ function bindAutoUpdaterListeners() {
       state: 'downloaded',
       message: `A versÃ£o ${info.version} jÃ¡ estÃ¡ pronta. Clique para reiniciar e instalar.`,
       progress: 100,
+      releaseUrl: getDefaultReleaseUrl(),
       ...metadata
     });
-    notifyUpdate(
+    notifyReleaseOnce(
+      `downloaded:${normalizeVersionLabel(info.version)}`,
       'AtualizaÃ§Ã£o pronta para instalar',
       metadata.releaseName
         ? `${metadata.releaseName} jÃ¡ foi baixada. Reinicie o app para instalar.`
@@ -317,7 +453,8 @@ function bindAutoUpdaterListeners() {
       progress: null,
       releaseName: null,
       releaseNotes: null,
-      releaseDate: null
+      releaseDate: null,
+      releaseUrl: getDefaultReleaseUrl()
     });
   });
 }
@@ -333,7 +470,8 @@ async function configureAutoUpdater() {
       progress: null,
       releaseName: null,
       releaseNotes: null,
-      releaseDate: null
+      releaseDate: null,
+      releaseUrl: getDefaultReleaseUrl()
     });
     return false;
   }
@@ -346,7 +484,8 @@ async function configureAutoUpdater() {
       progress: null,
       releaseName: null,
       releaseNotes: null,
-      releaseDate: null
+      releaseDate: null,
+      releaseUrl: getDefaultReleaseUrl()
     });
     return false;
   }
@@ -360,7 +499,8 @@ async function configureAutoUpdater() {
       progress: null,
       releaseName: null,
       releaseNotes: null,
-      releaseDate: null
+      releaseDate: null,
+      releaseUrl: getDefaultReleaseUrl()
     });
     return false;
   }
@@ -377,7 +517,8 @@ async function configureAutoUpdater() {
     message: 'Atualizador configurado. O MusFy verifica novas versÃµes automaticamente.',
     availableVersion: null,
     progress: null,
-    feedUrl
+    feedUrl,
+    releaseUrl: getDefaultReleaseUrl()
   });
   return true;
 }
@@ -392,17 +533,39 @@ async function checkForAppUpdates(force = false) {
     return updateStatus;
   }
 
+  const latestRelease = await fetchLatestGitHubRelease();
+
   try {
     await autoUpdater.checkForUpdates();
+
+    if (latestRelease) {
+      const autoUpdaterAlreadyHandling = ['available', 'downloading', 'downloaded'].includes(updateStatus.state);
+      if (!autoUpdaterAlreadyHandling && applyGitHubReleaseProbe(latestRelease, 'latest-tag')) {
+        return updateStatus;
+      }
+
+      if (updateStatus.state === 'idle') {
+        applyGitHubReleaseMetadata(
+          latestRelease,
+          'idle',
+          `Voce ja esta na versao mais recente. Ultima tag publicada confirmada: v${latestRelease.version}.`
+        );
+      }
+    }
   } catch (error) {
+    if (latestRelease && applyGitHubReleaseProbe(latestRelease, 'fallback-error')) {
+      return updateStatus;
+    }
+
     setUpdateStatus({
       state: 'error',
       message: normalizeAutoUpdateErrorMessage(error),
       progress: null,
       availableVersion: null,
-      releaseName: null,
-      releaseNotes: null,
-      releaseDate: null
+      releaseName: latestRelease?.releaseName || null,
+      releaseNotes: latestRelease?.releaseNotes || null,
+      releaseDate: latestRelease?.releaseDate || null,
+      releaseUrl: latestRelease?.releaseUrl || getDefaultReleaseUrl()
     });
   }
 
@@ -1018,6 +1181,15 @@ function registerIpc() {
     setImmediate(() => {
       autoUpdater.quitAndInstall(false, true);
     });
+    return true;
+  });
+  ipcMain.handle('app:open-external', async (_event, targetUrl: string) => {
+    const safeUrl = String(targetUrl || '').trim();
+    if (!safeUrl) {
+      return false;
+    }
+
+    await shell.openExternal(safeUrl);
     return true;
   });
   ipcMain.on('app:renderer-ready', () => {
