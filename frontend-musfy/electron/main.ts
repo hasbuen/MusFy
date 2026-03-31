@@ -96,6 +96,7 @@ let updateStatus: UpdateStatus = {
 let autoUpdaterListenersBound = false;
 let autoUpdateInterval: NodeJS.Timeout | null = null;
 let lastNotifiedReleaseKey: string | null = null;
+let mainWindowNeedsSurfaceRefresh = false;
 
 function log(...args: unknown[]) {
   console.log('[electron-main]', ...args);
@@ -870,16 +871,80 @@ function tryFinalizeStartupReveal() {
   finalizeWindowReveal();
 }
 
-function showMainWindow() {
+function markMainWindowSurfaceDirty() {
+  mainWindowNeedsSurfaceRefresh = true;
+}
+
+function scheduleMainWindowSurfaceRefresh(reason: string) {
+  const target = mainWindow;
+  if (!target || target.isDestroyed()) {
+    return;
+  }
+
+  const refresh = (delay: number) => {
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
+      }
+
+      if (!mainWindow.isVisible()) {
+        return;
+      }
+
+      try {
+        mainWindow.webContents.invalidate();
+      } catch (error) {
+        log(`Falha ao invalidar repaint da janela principal (${reason})`, error);
+      }
+    }, delay);
+  };
+
+  refresh(0);
+  refresh(80);
+  refresh(220);
+  mainWindowNeedsSurfaceRefresh = false;
+}
+
+async function ensureMainWindowRendererReady() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  const currentUrl = mainWindow.webContents.getURL();
+  const shouldReload =
+    mainWindow.webContents.isCrashed() ||
+    !currentUrl ||
+    currentUrl === 'about:blank';
+
+  if (!shouldReload) {
+    return;
+  }
+
+  rendererReady = false;
+
+  try {
+    await loadWindow(mainWindow);
+  } catch (error) {
+    log('Falha ao recarregar renderer da janela principal:', error);
+  }
+}
+
+async function showMainWindow() {
   if (!mainWindow) {
     createMainWindow();
   }
+
+  await ensureMainWindowRendererReady();
 
   hideMiniPlayer();
   if (mainWindow?.isMinimized()) {
     mainWindow.restore();
   }
+  const needsRefresh = mainWindowNeedsSurfaceRefresh || !mainWindow?.isVisible();
   mainWindow?.show();
+  if (needsRefresh) {
+    scheduleMainWindowSurfaceRefresh('show-main');
+  }
   mainWindow?.focus();
 }
 
@@ -888,6 +953,7 @@ function showMiniPlayer() {
     createMiniPlayerWindow();
   }
 
+  markMainWindowSurfaceDirty();
   mainWindow?.hide();
   miniPlayerWindow?.show();
   miniPlayerWindow?.focus();
@@ -902,6 +968,7 @@ function hideToTray() {
   if (mainWindow?.isMinimized()) {
     mainWindow.restore();
   }
+  markMainWindowSurfaceDirty();
   mainWindow?.hide();
 }
 
@@ -934,6 +1001,15 @@ function createMainWindow() {
     finalizeWindowReveal();
   });
 
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindowNeedsSurfaceRefresh = false;
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log('Renderer principal saiu inesperadamente:', details.reason);
+    markMainWindowSurfaceDirty();
+  });
+
   mainWindow.on('minimize', (event: Electron.Event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -944,18 +1020,21 @@ function createMainWindow() {
   mainWindow.on('show', () => {
     if (!isQuitting) {
       hideMiniPlayer();
+      scheduleMainWindowSurfaceRefresh('window-show');
     }
   });
 
   mainWindow.on('restore', () => {
     if (!isQuitting) {
       hideMiniPlayer();
+      scheduleMainWindowSurfaceRefresh('window-restore');
     }
   });
 
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
+      markMainWindowSurfaceDirty();
       mainWindow?.hide();
     }
   });
@@ -1028,7 +1107,7 @@ function buildTrayMenu() {
       label: 'Abrir MusFy',
       click: () => {
         hideMiniPlayer();
-        showMainWindow();
+        void showMainWindow();
       }
     },
     {
@@ -1067,7 +1146,7 @@ function createTray() {
 
   tray.on('double-click', () => {
     hideMiniPlayer();
-    showMainWindow();
+    void showMainWindow();
   });
 
   tray.on('click', () => {
@@ -1079,7 +1158,7 @@ function createTray() {
       mainWindow.focus();
     } else {
       hideMiniPlayer();
-      showMainWindow();
+      void showMainWindow();
     }
   });
 
@@ -1123,7 +1202,7 @@ function registerIpc() {
     if (miniPlayerWindow.isVisible()) {
       miniPlayerWindow.hide();
       if (!mainWindow?.isVisible()) {
-        showMainWindow();
+        await showMainWindow();
       }
       return false;
     }
@@ -1134,7 +1213,7 @@ function registerIpc() {
 
   ipcMain.handle('window:show-main', async () => {
     hideMiniPlayer();
-    showMainWindow();
+    await showMainWindow();
     return true;
   });
 
@@ -1339,8 +1418,7 @@ async function bootstrap() {
       return;
     }
 
-    mainWindow.show();
-    mainWindow.focus();
+    void showMainWindow();
   });
 }
 
@@ -1376,7 +1454,7 @@ if (!isServiceMode()) {
     app.on('second-instance', () => {
       void closeSplashWindow(true);
       hideMiniPlayer();
-      showMainWindow();
+      void showMainWindow();
     });
   }
 }
