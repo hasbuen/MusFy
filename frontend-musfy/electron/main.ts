@@ -97,6 +97,7 @@ let autoUpdaterListenersBound = false;
 let autoUpdateInterval: NodeJS.Timeout | null = null;
 let lastNotifiedReleaseKey: string | null = null;
 let mainWindowNeedsSurfaceRefresh = false;
+let pendingInstallUpdateVersion: string | null = null;
 
 function log(...args: unknown[]) {
   console.log('[electron-main]', ...args);
@@ -204,16 +205,59 @@ function isNewerVersion(candidate: string | null | undefined, current: string | 
   return compareVersions(candidate, current) > 0;
 }
 
+function looksLikeMojibake(value: string) {
+  return /(?:Ã.|Â.|�)/.test(value);
+}
+
+function repairTextEncoding(value: string | null | undefined) {
+  const input = String(value || '');
+  if (!input || !looksLikeMojibake(input)) {
+    return input;
+  }
+
+  try {
+    const repaired = Buffer.from(input, 'latin1').toString('utf8');
+    if (!repaired || repaired.includes('\u0000')) {
+      return input;
+    }
+
+    const inputSignals = (input.match(/(?:Ã.|Â.|�)/g) || []).length;
+    const repairedSignals = (repaired.match(/(?:Ã.|Â.|�)/g) || []).length;
+    return repairedSignals < inputSignals ? repaired : input;
+  } catch {
+    return input;
+  }
+}
+
+function sanitizeUpdateStatusValue(value: string | null | undefined) {
+  const normalized = repairTextEncoding(value);
+  return normalized.trim() || null;
+}
+
+function sanitizeUpdateStatusPayload(status: UpdateStatus) {
+  return {
+    ...status,
+    message: repairTextEncoding(status.message),
+    currentVersion: sanitizeUpdateStatusValue(status.currentVersion) || app.getVersion(),
+    availableVersion: sanitizeUpdateStatusValue(status.availableVersion),
+    feedUrl: sanitizeUpdateStatusValue(status.feedUrl),
+    releaseName: sanitizeUpdateStatusValue(status.releaseName),
+    releaseNotes: sanitizeUpdateStatusValue(status.releaseNotes),
+    releaseDate: sanitizeUpdateStatusValue(status.releaseDate),
+    releaseUrl: sanitizeUpdateStatusValue(status.releaseUrl)
+  } satisfies UpdateStatus;
+}
+
 function normalizeAutoUpdateErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error || '').trim();
+  const message = repairTextEncoding(error instanceof Error ? error.message : String(error || '').trim());
   const lowered = message.toLowerCase();
 
   if (lowered.includes('releases.atom') || (lowered.includes('404') && lowered.includes('github.com'))) {
-    return 'Nenhum release publico do MusFy foi publicado ainda no GitHub Releases, ou o repositorio de updates nao esta publico.';
+    return 'Nenhum release público do MusFy foi publicado ainda no GitHub Releases, ou o repositório de updates não está público.';
   }
 
   if (lowered.includes('latest.yml') && lowered.includes('404')) {
-    return 'O release mais recente do MusFy ainda nao contem o arquivo latest.yml no GitHub Releases.';
+    return 'O release mais recente do MusFy ainda não contém o arquivo latest.yml no GitHub Releases.';
   }
 
   return message || 'Falha ao consultar atualizações.';
@@ -239,7 +283,7 @@ function notifyReleaseOnce(key: string, title: string, body: string) {
   if (lastNotifiedReleaseKey === normalizedKey) return;
 
   lastNotifiedReleaseKey = normalizedKey;
-  notifyUpdate(title, body);
+  notifyUpdate(repairTextEncoding(title), repairTextEncoding(body));
 }
 
 function formatReleaseNotesForStatus(info: UpdateInfo) {
@@ -247,15 +291,15 @@ function formatReleaseNotesForStatus(info: UpdateInfo) {
   if (!notes) return null;
 
   if (typeof notes === 'string') {
-    const normalized = notes.trim();
+    const normalized = repairTextEncoding(notes).trim();
     return normalized || null;
   }
 
   const normalized = notes
     .map((entry) => {
-      const note = String(entry.note || '').trim();
+      const note = repairTextEncoding(String(entry.note || '')).trim();
       if (!note) return null;
-      const versionLabel = entry.version ? `Versao ${entry.version}\n` : '';
+      const versionLabel = entry.version ? `Versão ${entry.version}\n` : '';
       return `${versionLabel}${note}`.trim();
     })
     .filter((value): value is string => Boolean(value));
@@ -266,7 +310,7 @@ function formatReleaseNotesForStatus(info: UpdateInfo) {
 function getUpdateMetadata(info: UpdateInfo): Pick<UpdateStatus, 'availableVersion' | 'releaseName' | 'releaseNotes' | 'releaseDate'> {
   return {
     availableVersion: info.version || null,
-    releaseName: info.releaseName || null,
+    releaseName: sanitizeUpdateStatusValue(info.releaseName),
     releaseNotes: formatReleaseNotesForStatus(info),
     releaseDate: info.releaseDate || null
   };
@@ -293,10 +337,10 @@ async function fetchLatestGitHubRelease() {
 
     return {
       version,
-      releaseName: String(release.name || `MusFy ${version}`).trim() || null,
-      releaseNotes: String(release.body || '').trim() || null,
+      releaseName: sanitizeUpdateStatusValue(String(release.name || `MusFy ${version}`)),
+      releaseNotes: sanitizeUpdateStatusValue(String(release.body || '')),
       releaseDate: String(release.published_at || release.created_at || '').trim() || null,
-      releaseUrl: String(release.html_url || getDefaultReleaseUrl()).trim() || getDefaultReleaseUrl()
+      releaseUrl: sanitizeUpdateStatusValue(String(release.html_url || getDefaultReleaseUrl())) || getDefaultReleaseUrl()
     } satisfies GitHubReleaseSummary;
   } catch (error) {
     log('Falha ao consultar latest release via GitHub API:', error);
@@ -349,11 +393,11 @@ function scheduleAutoUpdateChecks() {
 }
 
 function publishUpdateStatus() {
-  updateStatus = {
+  updateStatus = sanitizeUpdateStatusPayload({
     ...updateStatus,
     currentVersion: app.getVersion(),
     feedUrl: getConfiguredUpdateFeedUrl() || null
-  };
+  });
 
   const targets = [mainWindow, miniPlayerWindow].filter(Boolean) as BrowserWindow[];
   for (const target of targets) {
@@ -364,12 +408,12 @@ function publishUpdateStatus() {
 }
 
 function setUpdateStatus(patch: Partial<UpdateStatus>) {
-  updateStatus = {
+  updateStatus = sanitizeUpdateStatusPayload({
     ...updateStatus,
     ...patch,
     currentVersion: app.getVersion(),
     feedUrl: patch.feedUrl !== undefined ? patch.feedUrl : getConfiguredUpdateFeedUrl() || null
-  };
+  });
   publishUpdateStatus();
 }
 
@@ -380,7 +424,7 @@ function bindAutoUpdaterListeners() {
   autoUpdater.on('checking-for-update', () => {
     setUpdateStatus({
       state: 'checking',
-      message: 'Verificando novas versoes...',
+      message: 'Verificando novas versões...',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -394,24 +438,24 @@ function bindAutoUpdaterListeners() {
     const metadata = getUpdateMetadata(info);
     setUpdateStatus({
       state: 'available',
-      message: `Nova versao encontrada: ${info.version}. Baixando em segundo plano...`,
+      message: `Nova versão encontrada: ${info.version}. Baixando em segundo plano...`,
       progress: 0,
       releaseUrl: getDefaultReleaseUrl(),
       ...metadata
     });
     notifyReleaseOnce(
       `available:${normalizeVersionLabel(info.version)}`,
-      'Nova atualizacao do MusFy',
+      'Nova atualização do MusFy',
       metadata.releaseName
-        ? `${metadata.releaseName} esta disponivel e sera baixada em segundo plano.`
-        : `A versao ${info.version} esta disponivel e sera baixada em segundo plano.`
+        ? `${metadata.releaseName} está disponível e será baixada em segundo plano.`
+        : `A versão ${info.version} está disponível e será baixada em segundo plano.`
     );
   });
 
   autoUpdater.on('update-not-available', () => {
     setUpdateStatus({
       state: 'idle',
-      message: 'Voce ja esta na versao mais recente.',
+      message: 'Você já está na versão mais recente.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -424,33 +468,35 @@ function bindAutoUpdaterListeners() {
   autoUpdater.on('download-progress', (progress) => {
     setUpdateStatus({
       state: 'downloading',
-      message: `Baixando atualizacao... ${Math.round(progress.percent || 0)}%`,
+      message: `Baixando atualização... ${Math.round(progress.percent || 0)}%`,
       progress: progress.percent || 0
     });
   });
 
   autoUpdater.on('update-downloaded', (info) => {
     const metadata = getUpdateMetadata(info);
+    pendingInstallUpdateVersion = normalizeVersionLabel(info.version);
     setUpdateStatus({
       state: 'downloaded',
-      message: `A versao ${info.version} ja esta pronta. Clique para reiniciar e instalar.`,
+      message: `A versão ${info.version} já está pronta. Clique para reiniciar e instalar.`,
       progress: 100,
       releaseUrl: getDefaultReleaseUrl(),
       ...metadata
     });
     notifyReleaseOnce(
       `downloaded:${normalizeVersionLabel(info.version)}`,
-      'Atualizacao pronta para instalar',
+      'Atualização pronta para instalar',
       metadata.releaseName
-        ? `${metadata.releaseName} ja foi baixada. Reinicie o app para instalar.`
-        : `A versao ${info.version} do MusFy ja foi baixada. Reinicie o app para instalar.`
+        ? `${metadata.releaseName} já foi baixada. Reinicie o app para instalar.`
+        : `A versão ${info.version} do MusFy já foi baixada. Reinicie o app para instalar.`
     );
   });
 
   autoUpdater.on('error', (error) => {
+    pendingInstallUpdateVersion = null;
     setUpdateStatus({
       state: 'error',
-      message: error?.message || 'Falha ao verificar atualizacoes.',
+      message: error?.message || 'Falha ao verificar atualizações.',
       progress: null,
       releaseName: null,
       releaseNotes: null,
@@ -466,7 +512,7 @@ async function configureAutoUpdater() {
   if (!app.isPackaged) {
     setUpdateStatus({
       state: 'disabled',
-      message: 'Atualizacao automatica so funciona no app instalado.',
+      message: 'Atualização automática só funciona no app instalado.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -480,7 +526,7 @@ async function configureAutoUpdater() {
   if (!appPreferences.autoUpdateEnabled) {
     setUpdateStatus({
       state: 'disabled',
-      message: 'Atualizacao automatica desativada nas configuracoes.',
+      message: 'Atualização automática desativada nas configurações.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -495,7 +541,7 @@ async function configureAutoUpdater() {
   if (!feedUrl) {
     setUpdateStatus({
       state: 'unconfigured',
-      message: 'Canal de atualizacao indisponivel no momento.',
+      message: 'Canal de atualização indisponível no momento.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -508,6 +554,7 @@ async function configureAutoUpdater() {
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.setFeedURL({
     provider: 'generic',
     url: feedUrl
@@ -515,7 +562,7 @@ async function configureAutoUpdater() {
 
   setUpdateStatus({
     state: 'idle',
-    message: 'Atualizador configurado. O MusFy verifica novas versoes automaticamente.',
+    message: 'Atualizador configurado. O MusFy verifica novas versões automaticamente.',
     availableVersion: null,
     progress: null,
     feedUrl,
@@ -549,7 +596,7 @@ async function checkForAppUpdates(force = false) {
         applyGitHubReleaseMetadata(
           latestRelease,
           'idle',
-          `Voce ja esta na versao mais recente. Ultima tag publicada confirmada: v${latestRelease.version}.`
+          `Você já está na versão mais recente. Última tag publicada confirmada: v${latestRelease.version}.`
         );
       }
     }
@@ -1256,9 +1303,32 @@ function registerIpc() {
       return false;
     }
 
+    const installingVersion = pendingInstallUpdateVersion || normalizeVersionLabel(updateStatus.availableVersion);
     isQuitting = true;
-    setImmediate(() => {
-      autoUpdater.quitAndInstall(false, true);
+    setUpdateStatus({
+      state: 'downloading',
+      progress: 100,
+      message: installingVersion
+        ? `Instalando MusFy ${installingVersion}...`
+        : 'Instalando atualização do MusFy...'
+    });
+    hideMiniPlayer();
+    miniPlayerWindow?.destroy();
+    tray?.destroy();
+    tray = null;
+    void closeSplashWindow(true);
+    setImmediate(async () => {
+      try {
+        await serviceController?.stop();
+      } catch (error) {
+        log('Falha ao parar servico antes do update:', error);
+      }
+
+      try {
+        autoUpdater.quitAndInstall(true, true);
+      } catch (error) {
+        log('Falha ao iniciar quitAndInstall:', error);
+      }
     });
     return true;
   });

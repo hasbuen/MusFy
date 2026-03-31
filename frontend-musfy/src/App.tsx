@@ -271,6 +271,49 @@ const AUTH_STORAGE_KEY = 'musfy-current-user';
 const DEVICE_ID_STORAGE_KEY = 'musfy-device-id';
 const DEVICE_NAME_STORAGE_KEY = 'musfy-device-name';
 
+function looksLikeMojibake(value: string) {
+  return /(?:Ã.|Â.|�)/.test(value);
+}
+
+function repairTextEncoding(value: string | null | undefined) {
+  const input = String(value || '');
+  if (!input || !looksLikeMojibake(input)) {
+    return input;
+  }
+
+  try {
+    const bytes = Uint8Array.from(input, (char) => char.charCodeAt(0) & 0xff);
+    const repaired = new TextDecoder('utf-8').decode(bytes);
+    if (!repaired || repaired.includes('\u0000')) {
+      return input;
+    }
+
+    const inputSignals = (input.match(/(?:Ã.|Â.|�)/g) || []).length;
+    const repairedSignals = (repaired.match(/(?:Ã.|Â.|�)/g) || []).length;
+    return repairedSignals < inputSignals ? repaired : input;
+  } catch {
+    return input;
+  }
+}
+
+function sanitizeDeepText<T>(value: T): T {
+  if (typeof value === 'string') {
+    return repairTextEncoding(value) as T;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeDeepText(entry)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, sanitizeDeepText(entry)])
+    ) as T;
+  }
+
+  return value;
+}
+
 function getSongSubtitle(song: Song | null) {
   if (!song) return 'Biblioteca';
   return getDisplayArtist(song) || (song.source === 'youtube' ? 'YouTube Audio' : 'Biblioteca');
@@ -336,7 +379,7 @@ function isGenericSongTitle(value?: string | null) {
 }
 
 function splitSongTitle(rawTitle?: string | null) {
-  const title = String(rawTitle || '').trim();
+  const title = repairTextEncoding(rawTitle).trim();
   if (!title) return { artistFromTitle: null, cleanTitle: 'Musica sem titulo' };
 
   const separators = [' - ', ' | ', ': '];
@@ -358,7 +401,7 @@ function splitSongTitle(rawTitle?: string | null) {
 function getDisplayArtist(song: Song | null) {
   if (!song) return null;
 
-  const fromField = String(song.artist || '').trim();
+  const fromField = repairTextEncoding(song.artist).trim();
   if (!isGenericArtistName(fromField)) {
     return fromField;
   }
@@ -375,14 +418,15 @@ function getDisplayTitle(song: Song | null) {
     return cleanTitle;
   }
 
-  const rawTitle = String(song.title || '').trim();
+  const rawTitle = repairTextEncoding(song.title).trim();
   return rawTitle && !isGenericSongTitle(rawTitle) ? rawTitle : cleanTitle || 'Musica sem titulo';
 }
 
 function getActivityMeta(entry: string) {
-  const match = entry.match(/^\[([^\]]+)\]\s*(.*)$/);
+  const normalizedEntry = repairTextEncoding(entry);
+  const match = normalizedEntry.match(/^\[([^\]]+)\]\s*(.*)$/);
   const timestamp = match ? match[1] : null;
-  const message = match ? match[2] : entry;
+  const message = match ? match[2] : normalizedEntry;
   const lower = message.toLowerCase();
 
   if (lower.includes('[error]') || lower.includes('erro')) {
@@ -409,7 +453,7 @@ function getActivityMeta(entry: string) {
 }
 
 function splitReleaseNotesText(releaseNotes?: string | null) {
-  return String(releaseNotes || '')
+  return repairTextEncoding(releaseNotes)
     .trim()
     .split(/\n\s*\n/g)
     .map((section) => section.trim())
@@ -431,7 +475,7 @@ function formatReleaseDateLabel(value?: string | null) {
 export default function App() {
   const storedDeviceId = localStorage.getItem(DEVICE_ID_STORAGE_KEY) || createDeviceId();
   const storedDeviceName =
-    localStorage.getItem(DEVICE_NAME_STORAGE_KEY) ||
+    repairTextEncoding(localStorage.getItem(DEVICE_NAME_STORAGE_KEY)) ||
     `${navigator.platform.includes('Win') ? 'Notebook' : 'Dispositivo'} MusFy`;
   localStorage.setItem(DEVICE_ID_STORAGE_KEY, storedDeviceId);
   localStorage.setItem(DEVICE_NAME_STORAGE_KEY, storedDeviceName);
@@ -476,7 +520,7 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState('');
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as User) : null;
+    return stored ? sanitizeDeepText(JSON.parse(stored) as User) : null;
   });
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [discoverPlaylists, setDiscoverPlaylists] = useState<Playlist[]>([]);
@@ -582,7 +626,7 @@ export default function App() {
   useEffect(() => {
     if (!window.musfyDesktop?.onUpdateStatus) return;
     return window.musfyDesktop.onUpdateStatus((status) => {
-      setDesktopUpdateStatus(status as DesktopUpdateStatus);
+      setDesktopUpdateStatus(sanitizeDeepText(status as DesktopUpdateStatus));
     });
   }, []);
 
@@ -596,9 +640,10 @@ export default function App() {
   );
 
   const persistCurrentUser = (user: User | null) => {
-    setCurrentUser(user);
-    if (user) {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+    const normalizedUser = user ? sanitizeDeepText(user) : null;
+    setCurrentUser(normalizedUser);
+    if (normalizedUser) {
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(normalizedUser));
     } else {
       localStorage.removeItem(AUTH_STORAGE_KEY);
     }
@@ -611,7 +656,7 @@ export default function App() {
         ...(user?.id ? { userId: user.id } : {})
       }
     });
-    setSongs(Array.isArray(res.data) ? res.data : []);
+    setSongs(sanitizeDeepText(Array.isArray(res.data) ? res.data : []));
   };
 
   const loadPlaylists = async (user = currentUser) => {
@@ -624,7 +669,7 @@ export default function App() {
       params: { userId: user.id }
     });
 
-    setPlaylists(Array.isArray(res.data) ? res.data : []);
+    setPlaylists(sanitizeDeepText(Array.isArray(res.data) ? res.data : []));
   };
 
   const loadDiscoverPlaylists = async (user = currentUser) => {
@@ -635,19 +680,19 @@ export default function App() {
       }
     });
 
-    setDiscoverPlaylists(Array.isArray(res.data) ? res.data : []);
+    setDiscoverPlaylists(sanitizeDeepText(Array.isArray(res.data) ? res.data : []));
   };
 
   const loadActivityLogs = async () => {
     const res = await api.get('/logs');
-    const nextLogs = Array.isArray(res.data) ? (res.data as string[]) : [];
+    const nextLogs = sanitizeDeepText(Array.isArray(res.data) ? (res.data as string[]) : []);
     const filteredLogs = nextLogs.filter(
       (entry) =>
         !entry.includes('Dispositivo ativo:') &&
         !entry.includes('Estado ') &&
         !entry.includes('ACK dispositivo')
     );
-    setActivityLogs(filteredLogs.slice(-80));
+    setActivityLogs(sanitizeDeepText(filteredLogs.slice(-80)));
   };
 
   const registerDevice = async (user = currentUser) => {
@@ -667,7 +712,7 @@ export default function App() {
       }
     });
 
-    const nextDevices = Array.isArray(res.data) ? (res.data as DeviceSession[]) : [];
+    const nextDevices = sanitizeDeepText(Array.isArray(res.data) ? (res.data as DeviceSession[]) : []);
     setDevices(nextDevices);
     if (
       selectedOutputDeviceId !== storedDeviceId &&
@@ -717,25 +762,25 @@ export default function App() {
 
   const loadDownloadJobs = async () => {
     const res = await api.get('/downloads/status');
-    setDownloadJobs(Array.isArray(res.data) ? (res.data as DownloadJob[]) : []);
+    setDownloadJobs(sanitizeDeepText(Array.isArray(res.data) ? (res.data as DownloadJob[]) : []));
   };
 
   const loadDesktopPreferences = async () => {
     if (!window.musfyDesktop?.getPreferences) return;
     const preferences = await window.musfyDesktop.getPreferences();
-    setDesktopPreferences(preferences);
+    setDesktopPreferences(sanitizeDeepText(preferences));
   };
 
   const loadDesktopUpdateStatus = async () => {
     if (!window.musfyDesktop?.getUpdateStatus) return;
     const status = await window.musfyDesktop.getUpdateStatus();
-    setDesktopUpdateStatus(status);
+    setDesktopUpdateStatus(sanitizeDeepText(status));
   };
 
   const triggerDesktopUpdateCheck = async () => {
     if (!window.musfyDesktop?.checkForUpdates) return;
     const status = await window.musfyDesktop.checkForUpdates();
-    setDesktopUpdateStatus(status);
+    setDesktopUpdateStatus(sanitizeDeepText(status));
   };
 
   const installDesktopUpdate = async () => {
@@ -782,15 +827,15 @@ export default function App() {
 
   const loadAndroidApkInfo = async () => {
     const [apkRes, storageRes] = await Promise.all([api.get('/android/apk-info'), api.get('/service/storage')]);
-    setAndroidApkInfo((apkRes.data || null) as AndroidApkInfo | null);
-    setServiceStorage(storageRes.data?.storage || null);
+    setAndroidApkInfo(sanitizeDeepText((apkRes.data || null) as AndroidApkInfo | null));
+    setServiceStorage(sanitizeDeepText(storageRes.data?.storage || null));
   };
 
   const resolvedAndroidApkUrl = (androidApkUrl || androidApkInfo?.preferredUrl || '').trim();
 
   const loadYoutubeRecentSearches = async () => {
     const res = await api.get('/youtube/history', { params: { limit: 8 } });
-    setYoutubeRecentSearches(Array.isArray(res.data) ? (res.data as YoutubeRecentSearch[]) : []);
+    setYoutubeRecentSearches(sanitizeDeepText(Array.isArray(res.data) ? (res.data as YoutubeRecentSearch[]) : []));
   };
 
   const sendDeviceState = async (
@@ -1839,7 +1884,7 @@ export default function App() {
       userId: currentUser?.id
     });
 
-    const updated = res.data.music as Song;
+    const updated = sanitizeDeepText(res.data.music as Song);
     setSongs((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
     if (currentSong?.id === updated.id) setCurrentSong(updated);
     await loadSongs(activeSection, currentUser);
@@ -1856,12 +1901,12 @@ export default function App() {
         userId: currentUser.id
       });
 
-      const playlist = res.data.playlist as Playlist;
+      const playlist = sanitizeDeepText(res.data.playlist as Playlist);
       setPlaylists((prev) => [playlist, ...prev]);
       setNewPlaylistName('');
       setPlaylistMessage('Playlist criada.');
     } catch (error: any) {
-      setPlaylistMessage(error?.response?.data?.error || 'Falha ao criar playlist.');
+      setPlaylistMessage(repairTextEncoding(error?.response?.data?.error) || 'Falha ao criar playlist.');
     }
   };
 
@@ -2423,7 +2468,7 @@ export default function App() {
           senha: authPassword
         });
 
-        user = registerRes.data.usuario as User;
+        user = sanitizeDeepText(registerRes.data.usuario as User);
         setAuthMessage('Usuário criado com sucesso.');
       } else {
         const loginRes = await api.post('/auth/login', {
@@ -2431,7 +2476,7 @@ export default function App() {
           senha: authPassword
         });
 
-        user = loginRes.data.usuario as User;
+        user = sanitizeDeepText(loginRes.data.usuario as User);
         setAuthMessage(`Sessão iniciada como ${user.nome}.`);
       }
 
@@ -2441,7 +2486,7 @@ export default function App() {
       setActiveSection('library');
       await loadSongs('library', user);
     } catch (error: any) {
-      setAuthMessage(error?.response?.data?.error || 'Falha ao autenticar usuário.');
+      setAuthMessage(repairTextEncoding(error?.response?.data?.error) || 'Falha ao autenticar usuário.');
     }
   };
 
@@ -2471,13 +2516,13 @@ export default function App() {
       if (!data) return;
 
       if (data.type === 'PLAYER_STATE' && isMiniMode) {
-        const payload = data.payload as PlayerSnapshot;
+        const payload = sanitizeDeepText(data.payload as PlayerSnapshot);
         setCurrentSong(payload.currentSong);
         setIsPlaying(payload.isPlaying);
         setCurrentTime(payload.currentTime);
         setDuration(payload.duration);
         setVolume(payload.volume);
-        setSongs(payload.queue || []);
+        setSongs(sanitizeDeepText(payload.queue || []));
         playbackModeRef.current = payload.playbackMode || 'audio';
         setPlaybackMode(payload.playbackMode || 'audio');
         setShowVideoInMiniPlayer(Boolean(payload.showVideoInMiniPlayer));
@@ -4797,11 +4842,11 @@ export default function App() {
                             <p className="truncate text-sm font-semibold text-white">{device.deviceName}</p>
                             <p className="truncate text-xs text-gray-400">
                               {device.userName || 'Sem usuario'}
-                              {device.ipAddress ? ` Â· ${device.ipAddress}` : ''}
+                              {device.ipAddress ? ` • ${device.ipAddress}` : ''}
                             </p>
                             <p className="mt-1 truncate text-xs text-gray-500">
                               {getDeviceStatusLabel(device)}
-                              {device.lastState?.currentSongTitle ? ` Â· ${device.lastState.currentSongTitle}` : ''}
+                              {device.lastState?.currentSongTitle ? ` • ${device.lastState.currentSongTitle}` : ''}
                             </p>
                             {device.lastError ? (
                               <p className="mt-1 truncate text-[11px] text-red-400">{device.lastError}</p>
