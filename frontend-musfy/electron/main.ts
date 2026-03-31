@@ -619,6 +619,35 @@ async function checkForAppUpdates(force = false) {
 
   return updateStatus;
 }
+
+async function recoverFromFailedInstallUpdate(installingVersion: string | null, error: unknown) {
+  log('Falha ao instalar update automaticamente:', error);
+  isQuitting = false;
+  createTray();
+
+  try {
+    await bootstrapServiceRuntime();
+  } catch (serviceError) {
+    log('Falha ao restaurar backend depois do erro no update:', serviceError);
+  }
+
+  try {
+    await configureAutoUpdater();
+  } catch (updaterError) {
+    log('Falha ao reconfigurar updater depois do erro no update:', updaterError);
+  }
+
+  setUpdateStatus({
+    state: 'downloaded',
+    progress: 100,
+    message: installingVersion
+      ? `Falha ao iniciar a instalação automática do MusFy ${installingVersion}. Tente novamente.`
+      : 'Falha ao iniciar a instalação automática. Tente novamente.'
+  });
+
+  await showMainWindow();
+}
+
 function resolveRendererPath() {
   return path.join(__dirname, '..', 'dist', 'index.html');
 }
@@ -1321,13 +1350,14 @@ function registerIpc() {
       try {
         await serviceController?.stop();
       } catch (error) {
-        log('Falha ao parar servico antes do update:', error);
+        await recoverFromFailedInstallUpdate(installingVersion, error);
+        return;
       }
 
       try {
         autoUpdater.quitAndInstall(true, true);
       } catch (error) {
-        log('Falha ao iniciar quitAndInstall:', error);
+        await recoverFromFailedInstallUpdate(installingVersion, error);
       }
     });
     return true;

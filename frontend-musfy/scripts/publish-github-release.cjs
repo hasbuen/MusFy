@@ -5,6 +5,8 @@ const { spawnSync } = require('child_process');
 const DEFAULT_GITHUB_OWNER = 'hasbuen';
 const DEFAULT_GITHUB_REPO = 'Projects';
 const REQUIRED_ARTIFACTS = ['latest.yml', 'MusFy.exe', 'MusFy.exe.blockmap'];
+const DEFAULT_GITHUB_MAX_ATTEMPTS = 4;
+const DEFAULT_GITHUB_RETRY_DELAY_MS = 2500;
 
 const frontendRoot = path.resolve(__dirname, '..');
 const packageJsonPath = path.join(frontendRoot, 'package.json');
@@ -115,6 +117,10 @@ function parseArgs(argv) {
   }
 
   return parsed;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function asBoolean(value, fallback) {
@@ -387,44 +393,133 @@ async function uploadArtifacts({ owner, repo, release, artifacts, token }) {
     const fileBuffer = fs.readFileSync(artifact.filePath);
 
     console.log(`[release] enviando ${artifact.name} (${formatBytes(artifact.size)})...`);
-    await githubRequest(`${uploadUrl}?name=${encodeURIComponent(artifact.name)}`, {
-      method: 'POST',
-      token,
-      expectedStatus: [201],
-      rawBody: fileBuffer,
-      extraHeaders: {
-        'Content-Type': artifact.contentType,
-        'Content-Length': String(fileBuffer.length)
-      }
+    await uploadArtifactWithRetries({
+      owner,
+      repo,
+      releaseId: currentRelease.id,
+      uploadUrl,
+      artifact,
+      fileBuffer,
+      token
     });
   }
 }
 
-async function githubRequest(url, { method, token, expectedStatus, body, rawBody, extraHeaders }) {
-  const response = await fetch(url, {
-    method,
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      ...(rawBody ? {} : { 'Content-Type': 'application/json; charset=utf-8' }),
-      ...(extraHeaders || {})
-    },
-    body: rawBody || (body ? JSON.stringify(body) : undefined)
+async function uploadArtifactWithRetries({ owner, repo, releaseId, uploadUrl, artifact, fileBuffer, token }) {
+  let attempt = 0;
+
+  while (attempt < DEFAULT_GITHUB_MAX_ATTEMPTS) {
+    attempt += 1;
+
+    try {
+      await githubRequest(`${uploadUrl}?name=${encodeURIComponent(artifact.name)}`, {
+        method: 'POST',
+        token,
+        expectedStatus: [201],
+        rawBody: fileBuffer,
+        maxAttempts: 1,
+        extraHeaders: {
+          'Content-Type': artifact.contentType,
+          'Content-Length': String(fileBuffer.length)
+        }
+      });
+      return;
+    } catch (error) {
+      const remoteAsset = await findReleaseAssetByName({ owner, repo, releaseId, token, name: artifact.name }).catch(
+        () => null
+      );
+
+      if (remoteAsset && Number(remoteAsset.size) === fileBuffer.length) {
+        console.log(`[release] asset confirmado apos falha de rede: ${artifact.name}`);
+        return;
+      }
+
+      if (remoteAsset) {
+        console.log(`[release] asset inconsistente detectado, removendo e reenviando: ${artifact.name}`);
+        await githubRequest(`https://api.github.com/repos/${owner}/${repo}/releases/assets/${remoteAsset.id}`, {
+          method: 'DELETE',
+          token,
+          expectedStatus: [204]
+        });
+      }
+
+      if (attempt >= DEFAULT_GITHUB_MAX_ATTEMPTS) {
+        throw error;
+      }
+      console.log(
+        `[release] upload falhou para ${artifact.name}. Nova tentativa ${attempt + 1}/${DEFAULT_GITHUB_MAX_ATTEMPTS} em ${DEFAULT_GITHUB_RETRY_DELAY_MS} ms...`
+      );
+      await wait(DEFAULT_GITHUB_RETRY_DELAY_MS * attempt);
+    }
+  }
+}
+
+async function findReleaseAssetByName({ owner, repo, releaseId, token, name }) {
+  const release = await githubRequest(`https://api.github.com/repos/${owner}/${repo}/releases/${releaseId}`, {
+    method: 'GET',
+    token,
+    expectedStatus: [200]
   });
 
-  const responseText = await response.text();
-  const responseData = tryParseJson(responseText);
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  return assets.find((asset) => asset.name === name) || null;
+}
 
-  if (!response.ok || (expectedStatus && !expectedStatus.includes(response.status))) {
-    const error = new Error(
-      `[${response.status}] ${extractGithubErrorMessage(responseData, responseText)}`
-    );
-    error.status = response.status;
-    throw error;
+async function githubRequest(url, { method, token, expectedStatus, body, rawBody, extraHeaders, maxAttempts }) {
+  const totalAttempts = Math.max(1, Number(maxAttempts || DEFAULT_GITHUB_MAX_ATTEMPTS));
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(rawBody ? {} : { 'Content-Type': 'application/json; charset=utf-8' }),
+          ...(extraHeaders || {})
+        },
+        body: rawBody || (body ? JSON.stringify(body) : undefined)
+      });
+
+      const responseText = await response.text();
+      const responseData = tryParseJson(responseText);
+
+      if (!response.ok || (expectedStatus && !expectedStatus.includes(response.status))) {
+        const error = new Error(
+          `[${response.status}] ${extractGithubErrorMessage(responseData, responseText)}`
+        );
+        error.status = response.status;
+        error.responseData = responseData;
+
+        if (attempt < totalAttempts && shouldRetryGithubStatus(response.status)) {
+          console.log(
+            `[release] GitHub respondeu ${response.status}. Nova tentativa ${attempt + 1}/${totalAttempts} em ${DEFAULT_GITHUB_RETRY_DELAY_MS} ms...`
+          );
+          await wait(DEFAULT_GITHUB_RETRY_DELAY_MS * attempt);
+          lastError = error;
+          continue;
+        }
+
+        throw error;
+      }
+
+      return responseData;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= totalAttempts || !shouldRetryGithubError(error)) {
+        throw error;
+      }
+
+      console.log(
+        `[release] falha de rede ao comunicar com o GitHub. Nova tentativa ${attempt + 1}/${totalAttempts} em ${DEFAULT_GITHUB_RETRY_DELAY_MS} ms...`
+      );
+      await wait(DEFAULT_GITHUB_RETRY_DELAY_MS * attempt);
+    }
   }
 
-  return responseData;
+  throw lastError;
 }
 
 function tryParseJson(value) {
@@ -444,6 +539,27 @@ function extractGithubErrorMessage(responseData, responseText) {
 
 function isNotFoundError(error) {
   return Boolean(error && typeof error === 'object' && error.status === 404);
+}
+
+function shouldRetryGithubStatus(status) {
+  return status === 408 || status === 409 || status === 423 || status === 429 || status >= 500;
+}
+
+function shouldRetryGithubError(error) {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  const message = String(error.message || '').toLowerCase();
+  return (
+    !('status' in error) ||
+    message.includes('fetch failed') ||
+    message.includes('timed out') ||
+    message.includes('econnreset') ||
+    message.includes('enotfound') ||
+    message.includes('socket') ||
+    message.includes('network')
+  );
 }
 
 function formatBytes(value) {
