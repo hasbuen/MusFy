@@ -1,0 +1,457 @@
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const DEFAULT_GITHUB_OWNER = 'hasbuen';
+const DEFAULT_GITHUB_REPO = 'Projects';
+const REQUIRED_ARTIFACTS = ['latest.yml', 'MusFy.exe', 'MusFy.exe.blockmap'];
+
+const frontendRoot = path.resolve(__dirname, '..');
+const packageJsonPath = path.join(frontendRoot, 'package.json');
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+
+void main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[release] ${message}`);
+  process.exit(1);
+});
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const requestedVersion = resolveRequestedVersion(args);
+  const owner = String(args.owner || process.env.MUSFY_GITHUB_OWNER || DEFAULT_GITHUB_OWNER).trim();
+  const repo = String(args.repo || process.env.MUSFY_GITHUB_REPO || DEFAULT_GITHUB_REPO).trim();
+  const tag = String(args.tag || process.env.MUSFY_RELEASE_TAG || `v${requestedVersion}`).trim();
+  const releaseName = String(
+    args.name || process.env.MUSFY_RELEASE_NAME || `MusFy ${requestedVersion}`
+  ).trim();
+  const token = String(process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim();
+  const draft = asBoolean(args.draft, false);
+  const prerelease = asBoolean(args.prerelease, false);
+  const buildOnly = asBoolean(args['build-only'], false);
+  const skipBuild = asBoolean(args['skip-build'], false);
+  const outputDir = path.join(frontendRoot, 'release', 'github', requestedVersion);
+  const relativeOutputDir = path.relative(frontendRoot, outputDir).replace(/\\/g, '/');
+  const releaseNotes = resolveReleaseNotes({
+    args,
+    requestedVersion,
+    tag
+  });
+
+  console.log(`[release] repo: ${owner}/${repo}`);
+  console.log(`[release] tag: ${tag}`);
+  console.log(`[release] versao: ${requestedVersion}`);
+  console.log(`[release] saida: ${outputDir}`);
+
+  if (!skipBuild) {
+    cleanOutputDir(outputDir);
+    runBuild(requestedVersion, relativeOutputDir);
+  }
+
+  applyReleaseMetadata(outputDir, {
+    releaseName,
+    releaseNotes
+  });
+
+  const artifacts = collectArtifacts(outputDir, requestedVersion);
+  console.log(`[release] artefatos prontos: ${artifacts.map((artifact) => artifact.name).join(', ')}`);
+
+  if (buildOnly) {
+    console.log('[release] build-only ativo, upload para o GitHub ignorado.');
+    return;
+  }
+
+  if (!token) {
+    fail('Defina GH_TOKEN ou GITHUB_TOKEN antes de subir o release no GitHub.');
+  }
+
+  const release = await createOrUpdateRelease({
+    owner,
+    repo,
+    tag,
+    releaseName,
+    releaseNotes,
+    draft,
+    prerelease,
+    token
+  });
+
+  await uploadArtifacts({
+    owner,
+    repo,
+    release,
+    artifacts,
+    token
+  });
+
+  console.log(`[release] release publicado: ${release.html_url}`);
+}
+
+function parseArgs(argv) {
+  const parsed = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg.startsWith('--')) {
+      fail(`Argumento invalido: ${arg}`);
+    }
+
+    const separatorIndex = arg.indexOf('=');
+    if (separatorIndex >= 0) {
+      const key = arg.slice(2, separatorIndex);
+      const value = arg.slice(separatorIndex + 1);
+      parsed[key] = value;
+      continue;
+    }
+
+    const key = arg.slice(2);
+    const nextArg = argv[index + 1];
+    if (nextArg && !nextArg.startsWith('--')) {
+      parsed[key] = nextArg;
+      index += 1;
+      continue;
+    }
+
+    parsed[key] = true;
+  }
+
+  return parsed;
+}
+
+function asBoolean(value, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value === 'boolean') return value;
+
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function isValidSemver(version) {
+  return /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version);
+}
+
+function resolveRequestedVersion(args) {
+  const requestedVersion = String(
+    args.version || process.env.MUSFY_RELEASE_VERSION || packageJson.version || ''
+  ).trim();
+
+  if (!requestedVersion) {
+    fail('Informe a versao com --version x.y.z ou defina MUSFY_RELEASE_VERSION.');
+  }
+
+  if (!isValidSemver(requestedVersion)) {
+    fail(`Versao invalida: "${requestedVersion}". Use semver, por exemplo 1.2.3.`);
+  }
+
+  if (requestedVersion === '0.0.0') {
+    fail('A versao 0.0.0 nao serve para update. Use --version x.y.z para publicar um release real.');
+  }
+
+  return requestedVersion;
+}
+
+function resolveReleaseNotes({ args, requestedVersion, tag }) {
+  const inlineNotes = String(args.notes || process.env.MUSFY_RELEASE_NOTES || '').trim();
+  if (inlineNotes) return inlineNotes;
+
+  const defaultNotesFile = path.join(frontendRoot, 'release-notes', `${requestedVersion}.md`);
+  const notesFile = String(
+    args['notes-file'] ||
+      process.env.MUSFY_RELEASE_NOTES_FILE ||
+      (fs.existsSync(defaultNotesFile) ? defaultNotesFile : '')
+  ).trim();
+  if (notesFile) {
+    const resolvedNotesFile = path.resolve(frontendRoot, notesFile);
+    if (!fs.existsSync(resolvedNotesFile)) {
+      fail(`Arquivo de notas nao encontrado: ${resolvedNotesFile}`);
+    }
+
+    return fs.readFileSync(resolvedNotesFile, 'utf8').trim();
+  }
+
+  return [
+    `Release automatizado do MusFy ${requestedVersion}.`,
+    '',
+    `Tag: ${tag}`,
+    `Artefatos: ${REQUIRED_ARTIFACTS.join(', ')}`,
+    `Gerado em: ${new Date().toISOString()}`
+  ].join('\n');
+}
+
+function applyReleaseMetadata(targetDir, { releaseName, releaseNotes }) {
+  const latestYmlPath = path.join(targetDir, 'latest.yml');
+  if (!fs.existsSync(latestYmlPath)) {
+    fail(`Arquivo latest.yml nao encontrado em ${latestYmlPath}`);
+  }
+
+  let latestYml = fs.readFileSync(latestYmlPath, 'utf8').replace(/\r\n/g, '\n');
+  latestYml = removeYamlEntry(latestYml, 'releaseName');
+  latestYml = removeYamlEntry(latestYml, 'releaseNotes', true).trimEnd();
+
+  const normalizedReleaseNotes = String(releaseNotes || '').trim();
+  latestYml = [
+    latestYml,
+    `releaseName: ${toYamlQuotedValue(releaseName)}`,
+    'releaseNotes: |-',
+    ...normalizedReleaseNotes.split('\n').map((line) => `  ${line}`)
+  ].join('\n');
+
+  fs.writeFileSync(latestYmlPath, `${latestYml}\n`, 'utf8');
+}
+
+function removeYamlEntry(source, key, block = false) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = block
+    ? new RegExp(`^${escapedKey}:\\s*\\|[-+]?\\n(?: {2}.*(?:\\n|$))*`, 'm')
+    : new RegExp(`^${escapedKey}:\\s*.*(?:\\n|$)`, 'm');
+  return source.replace(pattern, '');
+}
+
+function toYamlQuotedValue(value) {
+  return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function cleanOutputDir(targetDir) {
+  const normalizedFrontendRoot = path.resolve(frontendRoot);
+  const normalizedTargetDir = path.resolve(targetDir);
+  const releaseRoot = path.join(normalizedFrontendRoot, 'release');
+
+  if (!normalizedTargetDir.startsWith(releaseRoot)) {
+    fail(`Saida fora da pasta esperada de release: ${normalizedTargetDir}`);
+  }
+
+  fs.rmSync(normalizedTargetDir, { recursive: true, force: true });
+}
+
+function runBuild(version, outputDirectory) {
+  runCommand(process.execPath, ['build/windows/prepare-runtime.cjs'], 'prepare-runtime');
+  runCommand(getNpmCommand(), ['exec', '--', 'tsc'], 'tsc');
+  runCommand(getNpmCommand(), ['exec', '--', 'vite', 'build'], 'vite build');
+  runCommand(
+    getNpmCommand(),
+    [
+      'exec',
+      '--',
+      'electron-builder',
+      '--publish',
+      'never',
+      `--config.directories.output=${outputDirectory}`,
+      `--config.extraMetadata.version=${version}`
+    ],
+    'electron-builder'
+  );
+}
+
+function getNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function runCommand(command, commandArgs, label) {
+  console.log(`[release] executando ${label}...`);
+  const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
+  const result = spawnSync(command, commandArgs, {
+    cwd: frontendRoot,
+    stdio: 'inherit',
+    shell: useShell,
+    env: {
+      ...process.env
+    }
+  });
+
+  if (result.error) {
+    fail(`Falha ao iniciar ${label}: ${result.error.message}`);
+  }
+
+  if (result.status !== 0) {
+    fail(`Falha em ${label}${result.status == null ? '.' : ` (exit ${result.status}).`}`);
+  }
+}
+
+function collectArtifacts(targetDir, version) {
+  if (!fs.existsSync(targetDir)) {
+    fail(`Pasta de release nao encontrada: ${targetDir}`);
+  }
+
+  const artifacts = REQUIRED_ARTIFACTS.map((fileName) => {
+    const filePath = path.join(targetDir, fileName);
+    if (!fs.existsSync(filePath)) {
+      fail(`Artefato obrigatorio ausente: ${filePath}`);
+    }
+
+    return {
+      name: fileName,
+      filePath,
+      contentType: getContentType(fileName),
+      size: fs.statSync(filePath).size
+    };
+  });
+
+  const latestYml = fs.readFileSync(path.join(targetDir, 'latest.yml'), 'utf8');
+  if (!latestYml.includes(`version: ${version}`)) {
+    fail(`latest.yml foi gerado sem a versao esperada ${version}.`);
+  }
+
+  return artifacts;
+}
+
+function getContentType(fileName) {
+  if (fileName.endsWith('.yml')) return 'text/yaml; charset=utf-8';
+  if (fileName.endsWith('.blockmap')) return 'application/octet-stream';
+  if (fileName.endsWith('.exe')) return 'application/vnd.microsoft.portable-executable';
+  return 'application/octet-stream';
+}
+
+async function createOrUpdateRelease({
+  owner,
+  repo,
+  tag,
+  releaseName,
+  releaseNotes,
+  draft,
+  prerelease,
+  token
+}) {
+  const releaseByTagUrl = `https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`;
+  let existingRelease = null;
+
+  try {
+    existingRelease = await githubRequest(releaseByTagUrl, {
+      method: 'GET',
+      token,
+      expectedStatus: [200]
+    });
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  if (!existingRelease) {
+    console.log('[release] criando release no GitHub...');
+    return githubRequest(`https://api.github.com/repos/${owner}/${repo}/releases`, {
+      method: 'POST',
+      token,
+      expectedStatus: [201],
+      body: {
+        tag_name: tag,
+        name: releaseName,
+        body: releaseNotes,
+        draft,
+        prerelease
+      }
+    });
+  }
+
+  console.log('[release] release existente encontrado, atualizando metadados...');
+  return githubRequest(`https://api.github.com/repos/${owner}/${repo}/releases/${existingRelease.id}`, {
+    method: 'PATCH',
+    token,
+    expectedStatus: [200],
+    body: {
+      name: releaseName,
+      body: releaseNotes,
+      draft,
+      prerelease
+    }
+  });
+}
+
+async function uploadArtifacts({ owner, repo, release, artifacts, token }) {
+  const currentRelease = await githubRequest(
+    `https://api.github.com/repos/${owner}/${repo}/releases/${release.id}`,
+    {
+      method: 'GET',
+      token,
+      expectedStatus: [200]
+    }
+  );
+
+  const existingAssets = Array.isArray(currentRelease.assets) ? currentRelease.assets : [];
+  for (const artifact of artifacts) {
+    const previousAsset = existingAssets.find((asset) => asset.name === artifact.name);
+    if (previousAsset) {
+      console.log(`[release] removendo asset antigo: ${artifact.name}`);
+      await githubRequest(
+        `https://api.github.com/repos/${owner}/${repo}/releases/assets/${previousAsset.id}`,
+        {
+          method: 'DELETE',
+          token,
+          expectedStatus: [204]
+        }
+      );
+    }
+
+    const uploadUrl = currentRelease.upload_url.replace(/\{[^}]+\}$/, '');
+    const fileBuffer = fs.readFileSync(artifact.filePath);
+
+    console.log(`[release] enviando ${artifact.name} (${formatBytes(artifact.size)})...`);
+    await githubRequest(`${uploadUrl}?name=${encodeURIComponent(artifact.name)}`, {
+      method: 'POST',
+      token,
+      expectedStatus: [201],
+      rawBody: fileBuffer,
+      extraHeaders: {
+        'Content-Type': artifact.contentType,
+        'Content-Length': String(fileBuffer.length)
+      }
+    });
+  }
+}
+
+async function githubRequest(url, { method, token, expectedStatus, body, rawBody, extraHeaders }) {
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(rawBody ? {} : { 'Content-Type': 'application/json; charset=utf-8' }),
+      ...(extraHeaders || {})
+    },
+    body: rawBody || (body ? JSON.stringify(body) : undefined)
+  });
+
+  const responseText = await response.text();
+  const responseData = tryParseJson(responseText);
+
+  if (!response.ok || (expectedStatus && !expectedStatus.includes(response.status))) {
+    const error = new Error(
+      `[${response.status}] ${extractGithubErrorMessage(responseData, responseText)}`
+    );
+    error.status = response.status;
+    throw error;
+  }
+
+  return responseData;
+}
+
+function tryParseJson(value) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function extractGithubErrorMessage(responseData, responseText) {
+  if (responseData?.message) return responseData.message;
+  if (typeof responseText === 'string' && responseText.trim()) return responseText.trim();
+  return 'Falha ao comunicar com a API do GitHub.';
+}
+
+function isNotFoundError(error) {
+  return Boolean(error && typeof error === 'object' && error.status === 404);
+}
+
+function formatBytes(value) {
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function fail(message) {
+  throw new Error(message);
+}

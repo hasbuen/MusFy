@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "MusFy Mobile",
+    "slug": "musfy-mobile",
+    "scheme": "musfy",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "android": {
+      "package": "com.musfy.mobile",
+      "permissions": [
+        "INTERNET"
+      ]
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-file-system"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "30ceebe7-9859-4f1b-917c-1b4c8f24808d"
+      }
+    },
+    "owner": "hasbuen"
+  }
+}

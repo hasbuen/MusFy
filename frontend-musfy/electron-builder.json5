@@ -1,0 +1,108 @@
+// @see - https://www.electron.build/configuration/configuration
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.musfy.desktop",
+  "asar": true,
+  "productName": "MusFy",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "hasbuen",
+      "repo": "Projects",
+      "releaseType": "release",
+      "private": false
+    }
+  ],
+  "files": [
+    "dist",
+    "dist-electron"
+  ],
+  "extraFiles": [
+    {
+      "from": "build/windows/MusFyServiceHost.exe",
+      "to": "."
+    },
+    {
+      "from": "build/windows/Register-MusFyService.ps1",
+      "to": "."
+    }
+  ],
+  "extraResources": [
+    {
+      "from": "build/runtime",
+      "to": "runtime"
+    },
+    {
+      "from": "src/assets",
+      "to": "assets"
+    },
+    {
+      "from": "dist",
+      "to": "frontend-dist"
+    },
+    {
+      "from": "../backend-musfy",
+      "to": "backend-musfy",
+      "filter": [
+        "server.js",
+        "runtime-services.js",
+        "package.json",
+        "bin/**",
+        "node_modules/**",
+        "!node_modules/.cache/**",
+        "!node_modules/nodemon/**",
+        "!node_modules/.bin/**",
+        "!ffmpeg/**",
+        "!data/**",
+        "!downloads/**",
+        "!uploads/**",
+        "!opus_files/**",
+        "!video_files/**",
+        "!database.json",
+        "!downloader.py",
+        "!package-lock.json",
+        "!yarn.lock"
+      ]
+    }
+  ],
+  "mac": {
+    "target": [
+      "dmg"
+    ],
+    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+  },
+  "win": {
+    "icon": "src/assets/tray.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "MusFy.${ext}"
+  },
+  "nsis": {
+    "artifactName": "MusFy.${ext}",
+    "oneClick": false,
+    "perMachine": true,
+    "allowToChangeInstallationDirectory": true,
+    "allowElevation": true,
+    "installerIcon": "src/assets/tray.ico",
+    "uninstallerIcon": "src/assets/tray.ico",
+    "installerHeaderIcon": "src/assets/tray.ico",
+    "installerSidebar": "build/installerSidebar.bmp",
+    "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+    "include": "build/nsis/service-installer.nsh"
+  },
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "artifactName": "${productName}-Linux-${version}.${ext}"
+  }
+}

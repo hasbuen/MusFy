@@ -1,0 +1,48 @@
+# Workspace
+.vscode/
+.idea/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Environment and local secrets
+**/.env
+**/.env.*
+!**/.env.example
+mobile-musfy/credentials.json
+mobile-musfy/credentials/
+*.jks
+*.keystore
+
+# Dependencies and caches
+**/node_modules/
+**/.expo/
+**/.turbo/
+**/coverage/
+
+# Build output
+**/dist/
+**/dist-electron/
+frontend-musfy/release/
+frontend-musfy/release-*/
+!frontend-musfy/release-notes/
+!frontend-musfy/release-notes/**
+frontend-musfy/build/runtime/
+frontend-musfy/build/installerSidebar.bmp
+frontend-musfy/build/uninstallerSidebar.bmp
+frontend-musfy/build/windows/MusFyServiceHost.exe
+mobile-musfy/web-build/
+musfy-update-host/.vercel/
+
+# Generated local media/state
+backend-musfy/data/
+backend-musfy/bin/
+backend-musfy/database.json
+backend-musfy/downloads/
+backend-musfy/ffmpeg/
+backend-musfy/uploads/
+backend-musfy/opus_files/
+backend-musfy/tmp-redis/
+backend-musfy/video_files/
+musfy-update-host/public/windows/
