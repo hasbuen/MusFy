@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "sync:windows": "node scripts/sync-windows-release.cjs ../frontend-musfy/release-search-modal-playlists",
-    "sync:windows:auto-update": "node scripts/sync-windows-release.cjs ../frontend-musfy/release-auto-update"
+    "sync:windows": "node scripts/sync-windows-release.cjs",
+    "sync:windows:from": "node scripts/sync-windows-release.cjs"
   }
 }
