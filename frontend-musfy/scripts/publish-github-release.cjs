@@ -390,8 +390,6 @@ async function uploadArtifacts({ owner, repo, release, artifacts, token }) {
     }
 
     const uploadUrl = currentRelease.upload_url.replace(/\{[^}]+\}$/, '');
-    const fileBuffer = fs.readFileSync(artifact.filePath);
-
     console.log(`[release] enviando ${artifact.name} (${formatBytes(artifact.size)})...`);
     await uploadArtifactWithRetries({
       owner,
@@ -399,29 +397,22 @@ async function uploadArtifacts({ owner, repo, release, artifacts, token }) {
       releaseId: currentRelease.id,
       uploadUrl,
       artifact,
-      fileBuffer,
       token
     });
   }
 }
 
-async function uploadArtifactWithRetries({ owner, repo, releaseId, uploadUrl, artifact, fileBuffer, token }) {
+async function uploadArtifactWithRetries({ owner, repo, releaseId, uploadUrl, artifact, token }) {
   let attempt = 0;
 
   while (attempt < DEFAULT_GITHUB_MAX_ATTEMPTS) {
     attempt += 1;
 
     try {
-      await githubRequest(`${uploadUrl}?name=${encodeURIComponent(artifact.name)}`, {
-        method: 'POST',
-        token,
-        expectedStatus: [201],
-        rawBody: fileBuffer,
-        maxAttempts: 1,
-        extraHeaders: {
-          'Content-Type': artifact.contentType,
-          'Content-Length': String(fileBuffer.length)
-        }
+      await uploadArtifactRequest({
+        uploadUrl,
+        artifact,
+        token
       });
       return;
     } catch (error) {
@@ -429,7 +420,7 @@ async function uploadArtifactWithRetries({ owner, repo, releaseId, uploadUrl, ar
         () => null
       );
 
-      if (remoteAsset && Number(remoteAsset.size) === fileBuffer.length) {
+      if (remoteAsset && Number(remoteAsset.size) === artifact.size) {
         console.log(`[release] asset confirmado apos falha de rede: ${artifact.name}`);
         return;
       }
@@ -452,6 +443,83 @@ async function uploadArtifactWithRetries({ owner, repo, releaseId, uploadUrl, ar
       await wait(DEFAULT_GITHUB_RETRY_DELAY_MS * attempt);
     }
   }
+}
+
+async function uploadArtifactRequest({ uploadUrl, artifact, token }) {
+  const targetUrl = `${uploadUrl}?name=${encodeURIComponent(artifact.name)}`;
+
+  if (process.platform === 'win32') {
+    return uploadArtifactWithCurl({
+      targetUrl,
+      artifact,
+      token
+    });
+  }
+
+  const fileBuffer = fs.readFileSync(artifact.filePath);
+  return githubRequest(targetUrl, {
+    method: 'POST',
+    token,
+    expectedStatus: [201],
+    rawBody: fileBuffer,
+    maxAttempts: 1,
+    extraHeaders: {
+      'Content-Type': artifact.contentType,
+      'Content-Length': String(fileBuffer.length)
+    }
+  });
+}
+
+async function uploadArtifactWithCurl({ targetUrl, artifact, token }) {
+  const curlCommand = process.platform === 'win32' ? 'curl.exe' : 'curl';
+  const result = spawnSync(
+    curlCommand,
+    [
+      '--silent',
+      '--show-error',
+      '--fail-with-body',
+      '--location',
+      '--http1.1',
+      '--retry',
+      '5',
+      '--retry-all-errors',
+      '--retry-delay',
+      '2',
+      '--connect-timeout',
+      '30',
+      '--request',
+      'POST',
+      '--header',
+      'Accept: application/vnd.github+json',
+      '--header',
+      `Authorization: Bearer ${token}`,
+      '--header',
+      'X-GitHub-Api-Version: 2022-11-28',
+      '--header',
+      `Content-Type: ${artifact.contentType}`,
+      '--header',
+      `Content-Length: ${artifact.size}`,
+      '--data-binary',
+      `@${artifact.filePath}`,
+      targetUrl
+    ],
+    {
+      cwd: frontendRoot,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024
+    }
+  );
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const message = String(result.stderr || result.stdout || '').trim() || `curl exit ${result.status}`;
+    throw new Error(message);
+  }
+
+  return tryParseJson(String(result.stdout || '').trim());
 }
 
 async function findReleaseAssetByName({ owner, repo, releaseId, token, name }) {
