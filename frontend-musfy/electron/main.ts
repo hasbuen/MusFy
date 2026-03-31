@@ -379,7 +379,7 @@ function bindAutoUpdaterListeners() {
   autoUpdater.on('checking-for-update', () => {
     setUpdateStatus({
       state: 'checking',
-      message: 'Verificando novas versÃµes...',
+      message: 'Verificando novas versoes...',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -393,24 +393,24 @@ function bindAutoUpdaterListeners() {
     const metadata = getUpdateMetadata(info);
     setUpdateStatus({
       state: 'available',
-      message: `Nova versÃ£o encontrada: ${info.version}. Baixando em segundo plano...`,
+      message: `Nova versao encontrada: ${info.version}. Baixando em segundo plano...`,
       progress: 0,
       releaseUrl: getDefaultReleaseUrl(),
       ...metadata
     });
     notifyReleaseOnce(
       `available:${normalizeVersionLabel(info.version)}`,
-      'Nova atualizaÃ§Ã£o do MusFy',
+      'Nova atualizacao do MusFy',
       metadata.releaseName
-        ? `${metadata.releaseName} estÃ¡ disponÃ­vel e serÃ¡ baixada em segundo plano.`
-        : `A versÃ£o ${info.version} estÃ¡ disponÃ­vel e serÃ¡ baixada em segundo plano.`
+        ? `${metadata.releaseName} esta disponivel e sera baixada em segundo plano.`
+        : `A versao ${info.version} esta disponivel e sera baixada em segundo plano.`
     );
   });
 
   autoUpdater.on('update-not-available', () => {
     setUpdateStatus({
       state: 'idle',
-      message: 'VocÃª jÃ¡ estÃ¡ na versÃ£o mais recente.',
+      message: 'Voce ja esta na versao mais recente.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -423,7 +423,7 @@ function bindAutoUpdaterListeners() {
   autoUpdater.on('download-progress', (progress) => {
     setUpdateStatus({
       state: 'downloading',
-      message: `Baixando atualizaÃ§Ã£o... ${Math.round(progress.percent || 0)}%`,
+      message: `Baixando atualizacao... ${Math.round(progress.percent || 0)}%`,
       progress: progress.percent || 0
     });
   });
@@ -432,24 +432,24 @@ function bindAutoUpdaterListeners() {
     const metadata = getUpdateMetadata(info);
     setUpdateStatus({
       state: 'downloaded',
-      message: `A versÃ£o ${info.version} jÃ¡ estÃ¡ pronta. Clique para reiniciar e instalar.`,
+      message: `A versao ${info.version} ja esta pronta. Clique para reiniciar e instalar.`,
       progress: 100,
       releaseUrl: getDefaultReleaseUrl(),
       ...metadata
     });
     notifyReleaseOnce(
       `downloaded:${normalizeVersionLabel(info.version)}`,
-      'AtualizaÃ§Ã£o pronta para instalar',
+      'Atualizacao pronta para instalar',
       metadata.releaseName
-        ? `${metadata.releaseName} jÃ¡ foi baixada. Reinicie o app para instalar.`
-        : `A versÃ£o ${info.version} do MusFy jÃ¡ foi baixada. Reinicie o app para instalar.`
+        ? `${metadata.releaseName} ja foi baixada. Reinicie o app para instalar.`
+        : `A versao ${info.version} do MusFy ja foi baixada. Reinicie o app para instalar.`
     );
   });
 
   autoUpdater.on('error', (error) => {
     setUpdateStatus({
       state: 'error',
-      message: error?.message || 'Falha ao verificar atualizaÃ§Ãµes.',
+      message: error?.message || 'Falha ao verificar atualizacoes.',
       progress: null,
       releaseName: null,
       releaseNotes: null,
@@ -465,7 +465,7 @@ async function configureAutoUpdater() {
   if (!app.isPackaged) {
     setUpdateStatus({
       state: 'disabled',
-      message: 'AtualizaÃ§Ã£o automÃ¡tica sÃ³ funciona no app instalado.',
+      message: 'Atualizacao automatica so funciona no app instalado.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -479,7 +479,7 @@ async function configureAutoUpdater() {
   if (!appPreferences.autoUpdateEnabled) {
     setUpdateStatus({
       state: 'disabled',
-      message: 'AtualizaÃ§Ã£o automÃ¡tica desativada nas configuraÃ§Ãµes.',
+      message: 'Atualizacao automatica desativada nas configuracoes.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -494,7 +494,7 @@ async function configureAutoUpdater() {
   if (!feedUrl) {
     setUpdateStatus({
       state: 'unconfigured',
-      message: 'Canal de atualizaÃ§Ã£o indisponÃ­vel no momento.',
+      message: 'Canal de atualizacao indisponivel no momento.',
       availableVersion: null,
       progress: null,
       releaseName: null,
@@ -514,7 +514,7 @@ async function configureAutoUpdater() {
 
   setUpdateStatus({
     state: 'idle',
-    message: 'Atualizador configurado. O MusFy verifica novas versÃµes automaticamente.',
+    message: 'Atualizador configurado. O MusFy verifica novas versoes automaticamente.',
     availableVersion: null,
     progress: null,
     feedUrl,

@@ -513,6 +513,7 @@ export default function App() {
   const [apkQrCodeDataUrl, setApkQrCodeDataUrl] = useState('');
   const [serviceStorage, setServiceStorage] = useState<any>(null);
   const [settingsMessage, setSettingsMessage] = useState('');
+  const [desktopUpdateFocusTarget, setDesktopUpdateFocusTarget] = useState<'panel' | 'notes' | null>(null);
   const [desktopUpdateStatus, setDesktopUpdateStatus] = useState<DesktopUpdateStatus>({
     state: 'idle',
     message: 'Atualizador pronto.',
@@ -531,6 +532,9 @@ export default function App() {
   const objectUrlRef = useRef<string | null>(null);
   const playbackModeRef = useRef<PlaybackMode>('audio');
   const videoPanelRef = useRef<HTMLDivElement | null>(null);
+  const desktopUpdatePanelRef = useRef<HTMLDivElement | null>(null);
+  const desktopUpdateNotesRef = useRef<HTMLDivElement | null>(null);
+  const desktopUpdateFocusTimerRef = useRef<number | null>(null);
 
   const desktopApi = {
     minimizeToTray: async () => {
@@ -581,6 +585,15 @@ export default function App() {
       setDesktopUpdateStatus(status as DesktopUpdateStatus);
     });
   }, []);
+
+  useEffect(
+    () => () => {
+      if (desktopUpdateFocusTimerRef.current) {
+        window.clearTimeout(desktopUpdateFocusTimerRef.current);
+      }
+    },
+    []
+  );
 
   const persistCurrentUser = (user: User | null) => {
     setCurrentUser(user);
@@ -728,6 +741,32 @@ export default function App() {
   const installDesktopUpdate = async () => {
     if (!window.musfyDesktop?.installUpdate) return;
     await window.musfyDesktop.installUpdate();
+  };
+
+  const focusDesktopUpdateSection = (target: 'panel' | 'notes') => {
+    setActiveSection('settings');
+    setDesktopUpdateFocusTarget(target);
+
+    if (desktopUpdateFocusTimerRef.current) {
+      window.clearTimeout(desktopUpdateFocusTimerRef.current);
+    }
+
+    const scrollToTarget = () => {
+      const targetRef = target === 'notes' ? desktopUpdateNotesRef : desktopUpdatePanelRef;
+      targetRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    };
+
+    window.requestAnimationFrame(() => {
+      window.setTimeout(scrollToTarget, activeSection === 'settings' ? 0 : 180);
+    });
+
+    desktopUpdateFocusTimerRef.current = window.setTimeout(() => {
+      setDesktopUpdateFocusTarget(null);
+      desktopUpdateFocusTimerRef.current = null;
+    }, 2200);
   };
 
   const probeBackendAvailability = async () => {
@@ -1199,7 +1238,7 @@ export default function App() {
   );
   const updateHeadline =
     desktopUpdateStatus.releaseName ||
-    (desktopUpdateStatus.availableVersion ? `MusFy ${desktopUpdateStatus.availableVersion}` : 'Atualização do MusFy');
+    (desktopUpdateStatus.availableVersion ? `MusFy ${desktopUpdateStatus.availableVersion}` : 'Atualizacao do MusFy');
 
   const settingsContent = (
     <div className="space-y-6">
@@ -1311,7 +1350,14 @@ export default function App() {
                 <p className="mt-2 text-sm leading-6 text-gray-400">Este endereco e usado pelo desktop e pelos clientes da rede local.</p>
               </div>
 
-              <div className="rounded-[24px] border border-white/10 bg-[#0d0d0d] p-5">
+              <div
+                ref={desktopUpdatePanelRef}
+                className={`rounded-[24px] border bg-[#0d0d0d] p-5 transition ${
+                  desktopUpdateFocusTarget === 'panel'
+                    ? 'border-cyan-400/40 shadow-[0_0_0_1px_rgba(34,211,238,0.22)]'
+                    : 'border-white/10'
+                }`}
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Atualizações do GitHub</p>
@@ -1335,7 +1381,14 @@ export default function App() {
                   </p>
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                <div
+                  ref={desktopUpdateNotesRef}
+                  className={`mt-4 rounded-2xl border bg-white/[0.03] px-4 py-4 transition ${
+                    desktopUpdateFocusTarget === 'notes'
+                      ? 'border-cyan-400/40 shadow-[0_0_0_1px_rgba(34,211,238,0.22)]'
+                      : 'border-white/10'
+                  }`}
+                >
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Último release detectado</p>
                   <p className="mt-3 break-all text-sm font-semibold text-white">
                     {desktopUpdateStatus.releaseUrl || 'URL do release ainda indisponível'}
@@ -2664,9 +2717,9 @@ export default function App() {
           <div className="flex flex-col justify-between border-r border-white/10 bg-[linear-gradient(180deg,rgba(9,30,20,0.92)_0%,rgba(5,5,5,0.92)_100%)] p-10">
             <div>
               <p className="text-xs uppercase tracking-[0.32em] text-green-400/80">MusFy Desktop</p>
-              <h1 className="mt-5 text-6xl font-black tracking-tight">Sua mÃºsica, sua casa.</h1>
+              <h1 className="mt-5 text-6xl font-black tracking-tight">Sua musica, sua casa.</h1>
               <p className="mt-5 max-w-xl text-lg leading-8 text-gray-300">
-                Entre com login e senha para abrir a biblioteca do seu usuÃ¡rio, baixar links do YouTube e manter tudo separado por perfil.
+                Entre com login e senha para abrir a biblioteca do seu usuario, baixar links do YouTube e manter tudo separado por perfil.
               </p>
             </div>
 
@@ -2687,7 +2740,7 @@ export default function App() {
           <div className="flex items-center justify-center p-10">
             <div className="w-full max-w-md rounded-[32px] border border-white/10 bg-[#0b0b0b] p-8">
               <div className="mb-8">
-                <h2 className="text-3xl font-black">{authMode === 'login' ? 'Entrar' : 'Criar usuÃ¡rio'}</h2>
+                <h2 className="text-3xl font-black">{authMode === 'login' ? 'Entrar' : 'Criar usuario'}</h2>
                 <p className="mt-2 text-sm text-gray-400">
                   Use apenas login e senha. Sem email, sem complicação.
                 </p>
@@ -2937,7 +2990,7 @@ export default function App() {
                                   setPlaylistEditingName('');
                                 }}
                                 className={`rounded-xl p-2 ${active ? 'hover:bg-black/10' : 'hover:bg-white/10'}`}
-                                title="Cancelar ediÃ§Ã£o"
+                                title="Cancelar edicao"
                               >
                                 <X size={14} />
                               </button>
@@ -3604,7 +3657,7 @@ export default function App() {
                       <div className="mt-5 flex flex-wrap items-center gap-3 text-sm text-gray-400">
                         <span className="font-semibold text-white">{filteredSongs.length} faixas</span>
                         {activePlaylist ? (
-                          <span>Organizada por {currentUser?.nome || 'vocÃª'}</span>
+                          <span>Organizada por {currentUser?.nome || 'voce'}</span>
                         ) : (
                           <span>Publicada por {activeDiscoverPlaylist?.ownerUserName || 'outro usuario'}</span>
                         )}
@@ -3647,7 +3700,7 @@ export default function App() {
                     <span>#</span>
                     <span>Titulo</span>
                     <span>Origem</span>
-                    <span className="text-right">AÃ§Ãµes</span>
+                    <span className="text-right">Acoes</span>
                   </div>
 
                   <div className="divide-y divide-white/5">
@@ -4123,7 +4176,7 @@ export default function App() {
             </div>
 
             {playlists.length === 0 ? (
-              <p className="text-sm text-gray-400">Crie uma playlist na sidebar antes de adicionar mÃºsicas.</p>
+              <p className="text-sm text-gray-400">Crie uma playlist na sidebar antes de adicionar musicas.</p>
             ) : (
               <div className="space-y-2">
                 {playlists.map((playlist) => (
@@ -4399,7 +4452,7 @@ export default function App() {
             ) : (
               <button
                 onClick={() => {
-                  setActiveSection('settings');
+                  focusDesktopUpdateSection('panel');
                   void triggerDesktopUpdateCheck();
                 }}
                 className="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm text-gray-200 hover:bg-white/[0.08]"
@@ -4408,7 +4461,7 @@ export default function App() {
               </button>
             )}
             <button
-              onClick={() => setActiveSection('settings')}
+              onClick={() => focusDesktopUpdateSection('notes')}
               className="rounded-full border border-white/10 bg-transparent px-4 py-2 text-sm text-gray-400 hover:border-white/20 hover:text-white"
             >
               Ver notas
@@ -4589,7 +4642,7 @@ export default function App() {
           </div>
 
           <div className="min-w-0">
-            <p className="truncate font-bold">{getDisplayTitle(currentSong) || 'Nenhuma mÃºsica selecionada'}</p>
+            <p className="truncate font-bold">{getDisplayTitle(currentSong) || 'Nenhuma musica selecionada'}</p>
             <p className="text-xs text-gray-500">{getSongSubtitle(currentSong)}</p>
             {playerNotice ? <p className="mt-1 max-w-md truncate text-[11px] text-amber-300">{playerNotice}</p> : null}
           </div>
