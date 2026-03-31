@@ -787,10 +787,10 @@
           </div>
 
           <div class="cta-row">
-            <a id="download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/download/v0.1.1/MusFy.exe" target="_blank" rel="noreferrer">
+            <a id="download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe" target="_blank" rel="noreferrer">
               Baixar instalador
             </a>
-            <a id="release-button" class="button button-secondary" href="https://github.com/hasbuen/Projects/releases/tag/v0.1.1" target="_blank" rel="noreferrer">
+            <a id="release-button" class="button button-secondary" href="https://github.com/hasbuen/Projects/releases/latest" target="_blank" rel="noreferrer">
               Ver release
             </a>
           </div>
@@ -959,7 +959,7 @@
             </div>
 
             <div class="cta-row">
-              <a id="secondary-download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/download/v0.1.1/MusFy.exe" target="_blank" rel="noreferrer">
+              <a id="secondary-download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe" target="_blank" rel="noreferrer">
                 Instalar agora
               </a>
               <a class="button button-secondary" href="https://github.com/hasbuen/Projects" target="_blank" rel="noreferrer">
@@ -1011,19 +1011,28 @@
       </footer>
     </main>
     <script>
+      const repoOwner = "hasbuen";
+      const repoName = "Projects";
+      const repoUrl = `https://github.com/${repoOwner}/${repoName}`;
+      const latestReleaseUrl = `${repoUrl}/releases/latest`;
+      const latestDownloadUrl = `${latestReleaseUrl}/download/MusFy.exe`;
+      const latestReleaseApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`;
+      const localLatestYmlUrl = new URL("./windows/latest.yml", window.location.href).toString();
+      const localInstallerUrl = new URL("./windows/MusFy.exe", window.location.href).toString();
+
       const fallbackRelease = {
-        version: "0.1.1",
-        name: "MusFy 0.1.1",
-        size: 209316984,
-        publishedAt: "2026-03-31T16:02:44.407Z",
+        version: "0.1.3",
+        name: "MusFy 0.1.3",
+        size: 209324280,
+        publishedAt: "2026-03-31T17:06:54.652Z",
         assetName: "MusFy.exe",
-        downloadUrl: "https://github.com/hasbuen/Projects/releases/download/v0.1.1/MusFy.exe",
-        releaseUrl: "https://github.com/hasbuen/Projects/releases/tag/v0.1.1",
+        downloadUrl: latestDownloadUrl,
+        releaseUrl: latestReleaseUrl,
         notes: [
-          "Corrige o modo tela cheia do player de video com controles visiveis dentro do proprio painel.",
-          "Mantem mini player, video principal e sincronizacao entre janelas alinhados no desktop.",
-          "Exibe aviso no app quando uma nova atualizacao esta disponivel ou pronta para instalar.",
-          "Mostra notas da versao dentro da interface antes da instalacao."
+          "Corrige o mini player de video para nao cortar controles nem esconder parte da interface.",
+          "Amplia a janela do mini player de video e reorganiza os controles em duas linhas com tempo visivel.",
+          "Consulta a ultima tag publicada no GitHub Releases para avisar sobre nova versao mesmo quando o feed automatico falhar.",
+          "Exibe link do ultimo release e notas da versao diretamente na area de configuracoes do app."
         ]
       };
 
@@ -1104,14 +1113,14 @@
           publishedAt: releaseDate,
           notes,
           assetName: "MusFy.exe",
-          downloadUrl: "/windows/MusFy.exe",
-          releaseUrl: "https://github.com/hasbuen/Projects/releases/latest"
+          downloadUrl: localInstallerUrl,
+          releaseUrl: latestReleaseUrl
         };
       }
 
       async function loadLatestRelease() {
         try {
-          const response = await fetch("https://api.github.com/repos/hasbuen/Projects/releases/latest", {
+          const response = await fetch(latestReleaseApiUrl, {
             headers: { Accept: "application/vnd.github+json" }
           });
           if (!response.ok) throw new Error(`GitHub API ${response.status}`);
@@ -1137,7 +1146,7 @@
         }
 
         try {
-          const response = await fetch("/windows/latest.yml", { cache: "no-store" });
+          const response = await fetch(localLatestYmlUrl, { cache: "no-store" });
           if (!response.ok) throw new Error(`latest.yml ${response.status}`);
           const latestYml = await response.text();
           renderRelease(parseLatestYml(latestYml));

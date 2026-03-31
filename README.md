@@ -1,27 +1,36 @@
 # MusFy
 
-MusFy is a Windows desktop player built for people who want one place for local music, YouTube downloads, mini player control, tray mode, offline playback, and seamless update delivery.
+Desktop player for Windows with local library, YouTube downloads, mini player, tray mode, offline playback, and GitHub-powered updates.
 
-## Why MusFy
+[Baixar a ultima release](https://github.com/hasbuen/Projects/releases/latest)  
+[Abrir landing page](https://hasbuen.github.io/Projects/)  
+[Instalador Windows](https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe)
 
-- Local library, playlists, favorites, and user sessions in one desktop app
-- Video playback with fullscreen and mini player handoff
-- System tray mode for background listening without closing the app
-- Offline save flow for tracks you want to keep ready
-- GitHub-powered release delivery with version notes inside the app
+## O que o MusFy entrega
 
-## Download
+- Biblioteca local com playlists, favoritos e sessoes por usuario.
+- Video, fullscreen e mini player sincronizados sem perder o estado da reproducao.
+- Modo bandeja para continuar tocando com a interface oculta.
+- Fluxo offline para salvar faixas e manter o player pronto.
+- Auto update via GitHub Releases com notas da versao dentro do app.
 
-- Latest release: `https://github.com/hasbuen/Projects/releases/latest`
-- Windows installer: `https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe`
+## Experiencia do produto
 
-## Workspace
+MusFy foi pensado para ficar aberto o dia inteiro. A proposta e simples: abrir rapido, tocar rapido, esconder quando precisar e voltar exatamente ao ponto em que voce estava, sem virar uma interface pesada ou confusa.
 
-- `frontend-musfy`: Electron + React desktop app
-- `backend-musfy`: local host service and media backend
-- `mobile-musfy`: mobile client workspace
-- `musfy-update-host`: landing page and release host assets
+## Estrutura do repositorio
 
-## Current direction
+- `frontend-musfy`: desktop app em Electron + React.
+- `backend-musfy`: host local e servicos de midia.
+- `mobile-musfy`: workspace do cliente mobile.
+- `musfy-update-host`: landing page e assets usados no GitHub Pages.
 
-MusFy is being polished around three pillars: smoother playback, cleaner window modes, and a release flow that keeps the user informed when a new version lands.
+## Distribuicao
+
+- Releases: `latest.yml`, `MusFy.exe` e `MusFy.exe.blockmap` publicados no GitHub Releases.
+- Landing page: publicada via GitHub Pages a partir de `musfy-update-host/public`.
+- Notas da versao: arquivos em `frontend-musfy/release-notes`.
+
+## Status atual
+
+O repositorio ainda aparece como `Projects` no GitHub por falta de permissao administrativa no token usado para automacao, mas a marca, o app e a landing page ja estao alinhados como MusFy.
