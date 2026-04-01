@@ -102,6 +102,7 @@ let pendingInstallUpdateVersion: string | null = null;
 
 type InstallCapableAutoUpdater = typeof autoUpdater & {
   install: (isSilent?: boolean, isForceRunAfter?: boolean) => boolean;
+  quitAndInstall: (isSilent?: boolean, isForceRunAfter?: boolean) => void;
 };
 
 function log(...args: unknown[]) {
@@ -684,24 +685,11 @@ async function startDownloadedUpdateInstall(installingVersion: string | null) {
     autoUpdater.once('error', handleInstallError);
 
     try {
-      log('Iniciando instalador visivel do update do MusFy.');
-      const installStarted = getInstallCapableAutoUpdater().install(false, true);
-      if (!installStarted) {
-        finish(false);
-        void recoverFromFailedInstallUpdate(
-          installingVersion,
-          new Error(
-            installingVersion
-              ? `O instalador do MusFy ${installingVersion} nao foi iniciado pelo updater.`
-              : 'O instalador da atualizacao nao foi iniciado pelo updater.'
-          )
-        );
-        return;
-      }
+      log('Iniciando instalacao do update do MusFy via quitAndInstall.');
+      getInstallCapableAutoUpdater().quitAndInstall(false, true);
 
       quitTimer = setTimeout(() => {
         finish(true);
-        app.quit();
       }, INSTALLER_LAUNCH_GRACE_MS);
     } catch (error) {
       finish(false);
