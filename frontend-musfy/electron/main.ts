@@ -28,6 +28,7 @@ const DEFAULT_UPDATE_FEED_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GIT
 const DEFAULT_GITHUB_RELEASES_URL = `https://github.com/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
 const DEFAULT_GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_UPDATE_OWNER}/${GITHUB_UPDATE_REPO}/releases/latest`;
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const INSTALLER_LAUNCH_GRACE_MS = 1800;
 
 const MINI_PLAYER_COMPACT = { width: 560, height: 168 };
 const MINI_PLAYER_VIDEO = { width: 860, height: 620 };
@@ -98,6 +99,10 @@ let autoUpdateInterval: NodeJS.Timeout | null = null;
 let lastNotifiedReleaseKey: string | null = null;
 let mainWindowNeedsSurfaceRefresh = false;
 let pendingInstallUpdateVersion: string | null = null;
+
+type InstallCapableAutoUpdater = typeof autoUpdater & {
+  install: (isSilent?: boolean, isForceRunAfter?: boolean) => boolean;
+};
 
 function log(...args: unknown[]) {
   console.log('[electron-main]', ...args);
@@ -553,7 +558,7 @@ async function configureAutoUpdater() {
   }
 
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.setFeedURL({
     provider: 'generic',
@@ -621,7 +626,7 @@ async function checkForAppUpdates(force = false) {
 }
 
 async function recoverFromFailedInstallUpdate(installingVersion: string | null, error: unknown) {
-  log('Falha ao instalar update automaticamente:', error);
+  log('Falha ao abrir o instalador do update:', error);
   isQuitting = false;
   createTray();
 
@@ -641,11 +646,68 @@ async function recoverFromFailedInstallUpdate(installingVersion: string | null, 
     state: 'downloaded',
     progress: 100,
     message: installingVersion
-      ? `Falha ao iniciar a instalação automática do MusFy ${installingVersion}. Tente novamente.`
-      : 'Falha ao iniciar a instalação automática. Tente novamente.'
+      ? `Falha ao abrir o instalador do MusFy ${installingVersion}. Tente novamente.`
+      : 'Falha ao abrir o instalador da atualização. Tente novamente.'
   });
 
   await showMainWindow();
+}
+
+function getInstallCapableAutoUpdater() {
+  return autoUpdater as InstallCapableAutoUpdater;
+}
+
+async function startDownloadedUpdateInstall(installingVersion: string | null) {
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    let quitTimer: NodeJS.Timeout | null = null;
+
+    const finish = (started: boolean) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      autoUpdater.off('error', handleInstallError);
+      if (quitTimer) {
+        clearTimeout(quitTimer);
+        quitTimer = null;
+      }
+      resolve(started);
+    };
+
+    const handleInstallError = (error: Error) => {
+      finish(false);
+      void recoverFromFailedInstallUpdate(installingVersion, error);
+    };
+
+    autoUpdater.once('error', handleInstallError);
+
+    try {
+      log('Iniciando instalador visivel do update do MusFy.');
+      const installStarted = getInstallCapableAutoUpdater().install(false, true);
+      if (!installStarted) {
+        finish(false);
+        void recoverFromFailedInstallUpdate(
+          installingVersion,
+          new Error(
+            installingVersion
+              ? `O instalador do MusFy ${installingVersion} nao foi iniciado pelo updater.`
+              : 'O instalador da atualizacao nao foi iniciado pelo updater.'
+          )
+        );
+        return;
+      }
+
+      quitTimer = setTimeout(() => {
+        finish(true);
+        app.quit();
+      }, INSTALLER_LAUNCH_GRACE_MS);
+    } catch (error) {
+      finish(false);
+      void recoverFromFailedInstallUpdate(installingVersion, error);
+    }
+  });
 }
 
 function resolveRendererPath() {
@@ -990,7 +1052,8 @@ async function ensureMainWindowRendererReady() {
   const shouldReload =
     mainWindow.webContents.isCrashed() ||
     !currentUrl ||
-    currentUrl === 'about:blank';
+    currentUrl === 'about:blank' ||
+    (!rendererReady && !mainWindow.webContents.isLoadingMainFrame());
 
   if (!shouldReload) {
     return;
@@ -1073,6 +1136,7 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    rendererReady = false;
     log('Falha ao carregar renderer:', errorCode, errorDescription);
     finalizeWindowReveal();
   });
@@ -1082,7 +1146,14 @@ function createMainWindow() {
   });
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    rendererReady = false;
     log('Renderer principal saiu inesperadamente:', details.reason);
+    markMainWindowSurfaceDirty();
+  });
+
+  mainWindow.on('unresponsive', () => {
+    rendererReady = false;
+    log('Janela principal ficou sem resposta. Renderer sera recarregado ao reabrir.');
     markMainWindowSurfaceDirty();
   });
 
@@ -1338,8 +1409,8 @@ function registerIpc() {
       state: 'downloading',
       progress: 100,
       message: installingVersion
-        ? `Instalando MusFy ${installingVersion}...`
-        : 'Instalando atualização do MusFy...'
+        ? `Abrindo instalador do MusFy ${installingVersion}...`
+        : 'Abrindo instalador da atualização do MusFy...'
     });
     hideMiniPlayer();
     miniPlayerWindow?.destroy();
@@ -1355,7 +1426,10 @@ function registerIpc() {
       }
 
       try {
-        autoUpdater.quitAndInstall(true, true);
+        const installStarted = await startDownloadedUpdateInstall(installingVersion);
+        if (!installStarted) {
+          return;
+        }
       } catch (error) {
         await recoverFromFailedInstallUpdate(installingVersion, error);
       }

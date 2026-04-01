@@ -14,7 +14,12 @@ import {
   View
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Audio, type AVPlaybackStatus } from 'expo-av';
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+  type AudioStatus
+} from 'expo-audio';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   addSongToPlaylist,
@@ -135,7 +140,8 @@ function mmss(value: number) {
 }
 
 export default function App() {
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const playerRef = useRef<AudioPlayer | null>(null);
+  const playerStatusSubscriptionRef = useRef<{ remove: () => void } | null>(null);
   const [booting, setBooting] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('server');
@@ -206,11 +212,12 @@ export default function App() {
     setBooting(true);
     try {
       await initDatabase();
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        shouldDuckAndroid: true,
-        staysActiveInBackground: false
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false
       });
       const [storedBaseUrl, storedUser, storedDeviceId, cachedSongs, cachedPlaylists, cachedOffline] =
         await Promise.all([
@@ -392,14 +399,13 @@ export default function App() {
     if (normalized) await Promise.allSettled([syncSongs('library'), syncPlaylists('mine')]);
   }
 
-  function onStatus(status: AVPlaybackStatus) {
+  function onStatus(status: AudioStatus) {
     if (!status.isLoaded) {
-      if (status.error) toast('error', `Player: ${status.error}`);
       return;
     }
-    setIsPlaying(status.isPlaying);
-    setPositionMs(status.positionMillis);
-    setDurationMs(status.durationMillis || 0);
+    setIsPlaying(status.playing);
+    setPositionMs(Math.round(Number(status.currentTime || 0) * 1000));
+    setDurationMs(Math.round(Number(status.duration || 0) * 1000));
     if (status.didJustFinish) {
       setIsPlaying(false);
       setPositionMs(0);
@@ -407,11 +413,14 @@ export default function App() {
   }
 
   async function unload() {
-    if (soundRef.current) {
+    playerStatusSubscriptionRef.current?.remove();
+    playerStatusSubscriptionRef.current = null;
+
+    if (playerRef.current) {
       try {
-        await soundRef.current.unloadAsync();
+        playerRef.current.remove();
       } finally {
-        soundRef.current = null;
+        playerRef.current = null;
       }
     }
     setCurrentId(null);
@@ -433,24 +442,22 @@ export default function App() {
     }
     setPlayerBusy(true);
     try {
-      if (soundRef.current && currentId === song.id && currentSource === source) {
-        const status = await soundRef.current.getStatusAsync();
+      if (playerRef.current && currentId === song.id && currentSource === source) {
+        const status = playerRef.current.currentStatus;
         if (status.isLoaded) {
-          if (status.isPlaying) {
-            await soundRef.current.pauseAsync();
+          if (playerRef.current.playing) {
+            playerRef.current.pause();
           } else {
-            await soundRef.current.playAsync();
+            playerRef.current.play();
           }
           return;
         }
       }
       await unload();
-      const { sound } = await Audio.Sound.createAsync(
-        { uri },
-        { shouldPlay: true, progressUpdateIntervalMillis: 500 },
-        onStatus
-      );
-      soundRef.current = sound;
+      const player = createAudioPlayer(uri, { updateInterval: 500 });
+      playerStatusSubscriptionRef.current = player.addListener('playbackStatusUpdate', onStatus);
+      playerRef.current = player;
+      player.play();
       setCurrentId(song.id);
       setCurrentTitle(song.title);
       setCurrentArtist(song.artist || '');
@@ -982,7 +989,7 @@ export default function App() {
               <Btn
                 label={isPlaying ? 'Pausar' : 'Tocar'}
                 onPress={() => {
-                  if (!soundRef.current || !currentId || !currentSource) return;
+                  if (!playerRef.current || !currentId || !currentSource) return;
                   if (currentSource === 'offline') {
                     const local = offlineTracks.find((track) => track.songId === currentId);
                     if (local) void playOffline(local);

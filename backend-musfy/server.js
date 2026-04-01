@@ -1108,8 +1108,33 @@ let db = {
   playlists: []
 };
 
+function writeUtf8FileAtomically(targetPath, content, retries = 4) {
+  const directory = path.dirname(targetPath);
+  const tempPath = path.join(directory, `${path.basename(targetPath)}.tmp-${process.pid}`);
+
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      fs.writeFileSync(tempPath, content, 'utf-8');
+      fs.renameSync(tempPath, targetPath);
+      return;
+    } catch (error) {
+      try {
+        if (fs.existsSync(tempPath)) {
+          fs.unlinkSync(tempPath);
+        }
+      } catch {}
+
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(String(error?.code || '')) || attempt === retries) {
+        throw error;
+      }
+
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40 * attempt);
+    }
+  }
+}
+
 function saveDb() {
-  fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf-8');
+  writeUtf8FileAtomically(dbPath, JSON.stringify(db, null, 2));
 }
 
 function loadDb() {
@@ -2056,7 +2081,7 @@ function getYtDlpSingleArgs(url, baseFile) {
     args.push('--js-runtimes', `node:${NODE_RUNTIME_PATH}`);
   }
 
-  return args;
+  return appendYtDlpBrowserCookiesArgs(args);
 }
 
 function getYtDlpMetadataArgs(url) {
@@ -2074,7 +2099,78 @@ function getYtDlpMetadataArgs(url) {
     args.push('--js-runtimes', `node:${NODE_RUNTIME_PATH}`);
   }
 
-  return args;
+  return appendYtDlpBrowserCookiesArgs(args);
+}
+
+function shouldRetryYtDlpWithBrowserCookies(message) {
+  const normalized = String(message || '').toLowerCase();
+  return (
+    normalized.includes('sign in to confirm you') ||
+    normalized.includes("not a bot") ||
+    normalized.includes('--cookies-from-browser') ||
+    normalized.includes('cookies for the authentication')
+  );
+}
+
+function getYtDlpCookieBrowserCandidates() {
+  const configured = String(process.env.MUSFY_YTDLP_COOKIE_BROWSERS || '').trim();
+  const rawCandidates = configured
+    ? configured.split(',').map((entry) => entry.trim())
+    : ['edge', 'chrome', 'brave', 'firefox'];
+
+  return [...new Set(rawCandidates.filter(Boolean))];
+}
+
+function buildYtDlpAttemptPlans(baseArgs) {
+  return [
+    { label: 'default', args: [...baseArgs] },
+    ...getYtDlpCookieBrowserCandidates().map((browser) => ({
+      label: `cookies:${browser}`,
+      args: [...baseArgs, '--cookies-from-browser', browser]
+    }))
+  ];
+}
+
+let resolvedYtDlpCookieBrowser = null;
+let resolvedYtDlpCookieBrowserChecked = false;
+
+function resolveYtDlpCookieBrowser() {
+  if (resolvedYtDlpCookieBrowserChecked) {
+    return resolvedYtDlpCookieBrowser;
+  }
+
+  resolvedYtDlpCookieBrowserChecked = true;
+  const forcedBrowser = String(process.env.MUSFY_YTDLP_COOKIE_BROWSER || '').trim();
+  if (forcedBrowser) {
+    resolvedYtDlpCookieBrowser = forcedBrowser;
+    return resolvedYtDlpCookieBrowser;
+  }
+
+  const localAppData = String(process.env.LOCALAPPDATA || '').trim();
+  const appData = String(process.env.APPDATA || '').trim();
+  const probes = [
+    { browser: 'edge', dir: localAppData ? path.join(localAppData, 'Microsoft', 'Edge', 'User Data') : '' },
+    { browser: 'chrome', dir: localAppData ? path.join(localAppData, 'Google', 'Chrome', 'User Data') : '' },
+    { browser: 'brave', dir: localAppData ? path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') : '' },
+    { browser: 'firefox', dir: appData ? path.join(appData, 'Mozilla', 'Firefox', 'Profiles') : '' }
+  ];
+
+  const match = probes.find((entry) => entry.dir && fs.existsSync(entry.dir));
+  resolvedYtDlpCookieBrowser = match?.browser || null;
+  if (resolvedYtDlpCookieBrowser) {
+    addLog(`[yt] Cookies automáticos habilitados via navegador: ${resolvedYtDlpCookieBrowser}`);
+  }
+
+  return resolvedYtDlpCookieBrowser;
+}
+
+function appendYtDlpBrowserCookiesArgs(args) {
+  const browser = resolveYtDlpCookieBrowser();
+  if (!browser) {
+    return args;
+  }
+
+  return [...args, '--cookies-from-browser', browser];
 }
 
 async function searchYoutube(query) {
@@ -2137,82 +2233,105 @@ async function searchYoutube(query) {
 }
 
 async function fetchYoutubeSingleMetadata(url, jobId = null) {
-  const args = getYtDlpMetadataArgs(url);
+  const attempts = buildYtDlpAttemptPlans(getYtDlpMetadataArgs(url));
+  let lastError = null;
 
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawnManagedProcess(jobId, YTDLP_PATH, args, {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    const timeout = setTimeout(() => {
-      ytdlp.kill('SIGKILL');
-      reject(new Error('Consulta de metadados do YouTube expirou'));
-    }, 20000);
-
-    ytdlp.stdout.on('data', (data) => {
-      stdoutBuffer += data.toString();
-    });
-
-    ytdlp.stderr.on('data', (data) => {
-      const text = data.toString();
-      stderrBuffer += text;
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
-        addLog(`[meta] yt-dlp: ${line}`);
-      }
-    });
-
-    ytdlp.on('error', (err) => {
-      clearTimeout(timeout);
-      reject(new Error(`Falha ao consultar metadados do YouTube: ${err.message}`));
-    });
-
-    ytdlp.on('close', (code) => {
-      clearTimeout(timeout);
-
-      try {
-        assertJobNotPaused(jobId);
-      } catch (error) {
-        return reject(error);
+  for (const attemptPlan of attempts) {
+    try {
+      if (attemptPlan.label !== 'default') {
+        addLog(`[meta] Repetindo consulta com cookies do navegador: ${attemptPlan.label}`);
       }
 
-      if (code !== 0) {
-        const stderrSummary = stderrBuffer
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .slice(-6)
-          .join(' | ');
-        return reject(
-          new Error(`yt-dlp falhou ao consultar metadados (code ${code})${stderrSummary ? `: ${stderrSummary}` : ''}`)
-        );
-      }
-
-      const jsonMatch = stdoutBuffer.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        return reject(new Error('yt-dlp nao retornou JSON de metadados'));
-      }
-
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        resolve({
-          id: parsed?.id || '',
-          title: parsed?.title || '',
-          track: parsed?.track || '',
-          artist: parsed?.artist || '',
-          uploader: parsed?.uploader || '',
-          creator: parsed?.creator || '',
-          channel: parsed?.channel || '',
-          fullTitle: parsed?.fulltitle || '',
-          altTitle: parsed?.alt_title || ''
+      return await new Promise((resolve, reject) => {
+        const ytdlp = spawnManagedProcess(jobId, YTDLP_PATH, attemptPlan.args, {
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe']
         });
-      } catch (err) {
-        reject(new Error(`Falha ao interpretar metadados do YouTube: ${err.message}`));
+
+        let stdoutBuffer = '';
+        let stderrBuffer = '';
+        const timeout = setTimeout(() => {
+          ytdlp.kill('SIGKILL');
+          reject(new Error('Consulta de metadados do YouTube expirou'));
+        }, 20000);
+
+        ytdlp.stdout.on('data', (data) => {
+          stdoutBuffer += data.toString();
+        });
+
+        ytdlp.stderr.on('data', (data) => {
+          const text = data.toString();
+          stderrBuffer += text;
+          const lines = text.split(/\r?\n/).filter(Boolean);
+          for (const line of lines) {
+            addLog(`[meta] yt-dlp: ${line}`);
+          }
+        });
+
+        ytdlp.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(new Error(`Falha ao consultar metadados do YouTube: ${err.message}`));
+        });
+
+        ytdlp.on('close', (code) => {
+          clearTimeout(timeout);
+
+          try {
+            assertJobNotPaused(jobId);
+          } catch (error) {
+            return reject(error);
+          }
+
+          if (code !== 0) {
+            const stderrSummary = stderrBuffer
+              .split(/\r?\n/)
+              .filter(Boolean)
+              .slice(-6)
+              .join(' | ');
+            return reject(
+              new Error(`yt-dlp falhou ao consultar metadados (code ${code})${stderrSummary ? `: ${stderrSummary}` : ''}`)
+            );
+          }
+
+          const jsonMatch = stdoutBuffer.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            return reject(new Error('yt-dlp nao retornou JSON de metadados'));
+          }
+
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            resolve({
+              id: parsed?.id || '',
+              title: parsed?.title || '',
+              track: parsed?.track || '',
+              artist: parsed?.artist || '',
+              uploader: parsed?.uploader || '',
+              creator: parsed?.creator || '',
+              channel: parsed?.channel || '',
+              fullTitle: parsed?.fulltitle || '',
+              altTitle: parsed?.alt_title || ''
+            });
+          } catch (err) {
+            reject(new Error(`Falha ao interpretar metadados do YouTube: ${err.message}`));
+          }
+        });
+      });
+    } catch (error) {
+      lastError = error;
+      if (attemptPlan.label === 'default' && shouldRetryYtDlpWithBrowserCookies(error?.message || '')) {
+        addLog('[meta] YouTube exigiu autenticacao adicional. Tentando ler cookies do navegador.');
+        continue;
       }
-    });
-  });
+
+      if (attemptPlan.label !== 'default') {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError || new Error('Falha ao consultar metadados do YouTube');
 }
 
 function cleanupFileIfExists(filePath) {
@@ -2324,7 +2443,7 @@ function getYtDlpVideoArgs(url, baseFile) {
     args.push('--js-runtimes', `node:${NODE_RUNTIME_PATH}`);
   }
 
-  return args;
+  return appendYtDlpBrowserCookiesArgs(args);
 }
 
 async function inspectYoutubeUrl(url, jobId = null) {
@@ -3159,6 +3278,10 @@ async function fetchYoutubePlaylistData(playlistUrl, jobId = null) {
       ]
     }
   ];
+
+  attempts.forEach((attempt) => {
+    attempt.args = appendYtDlpBrowserCookiesArgs(attempt.args);
+  });
 
   if (fs.existsSync(NODE_RUNTIME_PATH)) {
     attempts[0].args.splice(1, 0, '--js-runtimes', `node:${NODE_RUNTIME_PATH}`);

@@ -50,6 +50,26 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
     return 'sql-wasm.wasm';
   }
 
+  function isSqliteCorruptionError(error) {
+    const message = String(error?.message || error || '').toLowerCase();
+    return (
+      message.includes('file is not a database') ||
+      message.includes('database disk image is malformed') ||
+      message.includes('not a database')
+    );
+  }
+
+  function backupCorruptedSqlite(error) {
+    if (!fs.existsSync(sqliteDbPath)) {
+      return false;
+    }
+
+    const backupPath = `${sqliteDbPath}.corrupt-${Date.now()}`;
+    fs.renameSync(sqliteDbPath, backupPath);
+    log(`[sqlite] Banco auxiliar corrompido movido para ${backupPath}: ${error.message}`);
+    return true;
+  }
+
   function persistSqlite() {
     if (!sqliteDb) return;
     const binary = sqliteDb.export();
@@ -104,7 +124,16 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
         .then((SQL) => {
           sqliteModule = SQL;
           const initialBuffer = fs.existsSync(sqliteDbPath) ? fs.readFileSync(sqliteDbPath) : null;
-          sqliteDb = initialBuffer?.length ? new sqliteModule.Database(initialBuffer) : new sqliteModule.Database();
+          try {
+            sqliteDb = initialBuffer?.length ? new sqliteModule.Database(initialBuffer) : new sqliteModule.Database();
+          } catch (error) {
+            if (!initialBuffer?.length || !isSqliteCorruptionError(error)) {
+              throw error;
+            }
+
+            backupCorruptedSqlite(error);
+            sqliteDb = new sqliteModule.Database();
+          }
           runSqliteMigrations();
           persistSqlite();
           return sqliteDb;

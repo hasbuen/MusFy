@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "expo": "~55.0.0",
-    "expo-av": "^16.0.8",
+    "expo-asset": "~55.0.10",
+    "expo-audio": "~55.0.9",
+    "expo-build-properties": "~55.0.10",
     "expo-file-system": "~55.0.12",
     "expo-linear-gradient": "~55.0.9",
     "expo-sqlite": "~55.0.11",

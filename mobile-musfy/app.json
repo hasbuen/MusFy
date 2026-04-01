@@ -8,14 +8,23 @@
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.musfy.mobile",
-      "usesCleartextTraffic": true,
       "permissions": [
         "INTERNET"
       ]
     },
     "plugins": [
       "expo-sqlite",
-      "expo-file-system"
+      "expo-file-system",
+      "expo-audio",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-asset"
     ],
     "extra": {
       "eas": {
