@@ -99,6 +99,7 @@ let autoUpdateInterval: NodeJS.Timeout | null = null;
 let lastNotifiedReleaseKey: string | null = null;
 let mainWindowNeedsSurfaceRefresh = false;
 let pendingInstallUpdateVersion: string | null = null;
+let mainWindowReloadPending = false;
 
 type InstallCapableAutoUpdater = typeof autoUpdater & {
   install: (isSilent?: boolean, isForceRunAfter?: boolean) => boolean;
@@ -1061,6 +1062,11 @@ async function showMainWindow() {
     createMainWindow();
   }
 
+  if (mainWindowReloadPending) {
+    rendererReady = false;
+    log('Renderer principal sera recarregado ao sair da bandeja para evitar tela branca.');
+  }
+
   await ensureMainWindowRendererReady();
 
   hideMiniPlayer();
@@ -1072,6 +1078,7 @@ async function showMainWindow() {
   if (needsRefresh) {
     scheduleMainWindowSurfaceRefresh('show-main');
   }
+  mainWindowReloadPending = false;
   mainWindow?.focus();
 }
 
@@ -1095,6 +1102,7 @@ function hideToTray() {
   if (mainWindow?.isMinimized()) {
     mainWindow.restore();
   }
+  mainWindowReloadPending = true;
   markMainWindowSurfaceDirty();
   mainWindow?.hide();
 }
@@ -1169,6 +1177,7 @@ function createMainWindow() {
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
+      mainWindowReloadPending = true;
       markMainWindowSurfaceDirty();
       mainWindow?.hide();
     }

@@ -2114,11 +2114,12 @@ function shouldRetryYtDlpWithBrowserCookies(message) {
 
 function getYtDlpCookieBrowserCandidates() {
   const configured = String(process.env.MUSFY_YTDLP_COOKIE_BROWSERS || '').trim();
-  const rawCandidates = configured
-    ? configured.split(',').map((entry) => entry.trim())
-    : ['edge', 'chrome', 'brave', 'firefox'];
+  if (configured) {
+    return [...new Set(configured.split(',').map((entry) => entry.trim()).filter(Boolean))];
+  }
 
-  return [...new Set(rawCandidates.filter(Boolean))];
+  const detectedBrowser = resolveYtDlpCookieBrowserWithWindowsProfileFallback();
+  return detectedBrowser ? [detectedBrowser] : [];
 }
 
 function buildYtDlpAttemptPlans(baseArgs) {
@@ -2141,6 +2142,58 @@ function getYtDlpCookieProbeDirs(localAppData, appData) {
     { browser: 'brave', dir: localAppData ? path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') : '' },
     { browser: 'firefox', dir: appData ? path.join(appData, 'Mozilla', 'Firefox', 'Profiles') : '' }
   ];
+}
+
+function hasChromiumCookiesDatabase(userDataDir) {
+  if (!userDataDir || !fs.existsSync(userDataDir)) {
+    return false;
+  }
+
+  const candidateDirs = ['Default'];
+  try {
+    const discovered = fs
+      .readdirSync(userDataDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^Profile\s+\d+$/i.test(entry.name))
+      .map((entry) => entry.name);
+    candidateDirs.push(...discovered);
+  } catch (_error) {
+    return false;
+  }
+
+  return candidateDirs.some((profileName) => {
+    const profileDir = path.join(userDataDir, profileName);
+    return (
+      fs.existsSync(path.join(profileDir, 'Network', 'Cookies')) ||
+      fs.existsSync(path.join(profileDir, 'Cookies'))
+    );
+  });
+}
+
+function hasFirefoxCookiesDatabase(profilesDir) {
+  if (!profilesDir || !fs.existsSync(profilesDir)) {
+    return false;
+  }
+
+  try {
+    return fs
+      .readdirSync(profilesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .some((entry) => fs.existsSync(path.join(profilesDir, entry.name, 'cookies.sqlite')));
+  } catch (_error) {
+    return false;
+  }
+}
+
+function hasYtDlpCookieDatabase(browser, dir) {
+  if (!dir) {
+    return false;
+  }
+
+  if (browser === 'firefox') {
+    return hasFirefoxCookiesDatabase(dir);
+  }
+
+  return hasChromiumCookiesDatabase(dir);
 }
 
 function resolveWindowsUserProfileCandidates() {
@@ -2204,7 +2257,9 @@ function tryResolveYtDlpBrowserFromProfile(profileDir) {
 
   const localAppData = path.join(normalizedProfile, 'AppData', 'Local');
   const appData = path.join(normalizedProfile, 'AppData', 'Roaming');
-  const match = getYtDlpCookieProbeDirs(localAppData, appData).find((entry) => entry.dir && fs.existsSync(entry.dir));
+  const match = getYtDlpCookieProbeDirs(localAppData, appData).find(
+    (entry) => entry.dir && hasYtDlpCookieDatabase(entry.browser, entry.dir)
+  );
   if (!match) {
     return null;
   }
@@ -2231,14 +2286,9 @@ function resolveYtDlpCookieBrowser() {
 
   const localAppData = String(process.env.LOCALAPPDATA || '').trim();
   const appData = String(process.env.APPDATA || '').trim();
-  const probes = [
-    { browser: 'edge', dir: localAppData ? path.join(localAppData, 'Microsoft', 'Edge', 'User Data') : '' },
-    { browser: 'chrome', dir: localAppData ? path.join(localAppData, 'Google', 'Chrome', 'User Data') : '' },
-    { browser: 'brave', dir: localAppData ? path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') : '' },
-    { browser: 'firefox', dir: appData ? path.join(appData, 'Mozilla', 'Firefox', 'Profiles') : '' }
-  ];
-
-  const match = probes.find((entry) => entry.dir && fs.existsSync(entry.dir));
+  const match = getYtDlpCookieProbeDirs(localAppData, appData).find(
+    (entry) => entry.dir && hasYtDlpCookieDatabase(entry.browser, entry.dir)
+  );
   resolvedYtDlpCookieBrowser = match?.browser || null;
   if (resolvedYtDlpCookieBrowser) {
     addLog(`[yt] Cookies automáticos habilitados via navegador: ${resolvedYtDlpCookieBrowser}`);
