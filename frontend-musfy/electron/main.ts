@@ -1,5 +1,6 @@
 ﻿import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, Notification } from 'electron';
 import { spawn } from 'child_process';
+import type { Rectangle } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1032,6 +1033,31 @@ function scheduleMainWindowSurfaceRefresh(reason: string) {
   mainWindowNeedsSurfaceRefresh = false;
 }
 
+function recreateMainWindowForRecovery(reason: string) {
+  const previousWindow = mainWindow;
+  let previousBounds: Rectangle | null = null;
+
+  if (previousWindow && !previousWindow.isDestroyed()) {
+    try {
+      previousBounds = previousWindow.getBounds();
+      previousWindow.destroy();
+    } catch (error) {
+      log(`Falha ao destruir janela principal para recuperacao (${reason})`, error);
+    }
+  }
+
+  mainWindow = null;
+  rendererReady = false;
+  createMainWindow();
+
+  const recreatedWindow = mainWindow as BrowserWindow | null;
+  if (previousBounds) {
+    recreatedWindow?.setBounds(previousBounds);
+  }
+
+  log(`Janela principal recriada para recuperar renderer (${reason}).`);
+}
+
 async function ensureMainWindowRendererReady() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -1063,8 +1089,7 @@ async function showMainWindow() {
   }
 
   if (mainWindowReloadPending) {
-    rendererReady = false;
-    log('Renderer principal sera recarregado ao sair da bandeja para evitar tela branca.');
+    recreateMainWindowForRecovery('tray-return');
   }
 
   await ensureMainWindowRendererReady();
@@ -1103,6 +1128,7 @@ function hideToTray() {
     mainWindow.restore();
   }
   mainWindowReloadPending = true;
+  rendererReady = false;
   markMainWindowSurfaceDirty();
   mainWindow?.hide();
 }
@@ -1178,6 +1204,7 @@ function createMainWindow() {
     if (!isQuitting) {
       event.preventDefault();
       mainWindowReloadPending = true;
+      rendererReady = false;
       markMainWindowSurfaceDirty();
       mainWindow?.hide();
     }

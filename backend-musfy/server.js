@@ -1576,6 +1576,7 @@ async function searchYoutubePlaylistResults(query) {
 
 async function searchYoutubeVideoResults(query) {
   const args = [
+    '--ignore-config',
     `ytsearch${YOUTUBE_SEARCH_LIMIT}:${query}`,
     '--dump-single-json',
     '--flat-playlist',
@@ -2081,7 +2082,7 @@ function getYtDlpSingleArgs(url, baseFile) {
     args.push('--js-runtimes', `node:${NODE_RUNTIME_PATH}`);
   }
 
-  return appendYtDlpBrowserCookiesArgs(args);
+  return appendYtDlpCookieFileArgs(args);
 }
 
 function getYtDlpMetadataArgs(url) {
@@ -2099,7 +2100,19 @@ function getYtDlpMetadataArgs(url) {
     args.push('--js-runtimes', `node:${NODE_RUNTIME_PATH}`);
   }
 
-  return appendYtDlpBrowserCookiesArgs(args);
+  return appendYtDlpCookieFileArgs(args);
+}
+
+function isTruthyEnvFlag(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || '').trim());
+}
+
+function isYtDlpBrowserCookiesExplicitlyEnabled() {
+  return (
+    isTruthyEnvFlag(process.env.MUSFY_YTDLP_ALLOW_BROWSER_COOKIES) ||
+    Boolean(String(process.env.MUSFY_YTDLP_COOKIE_BROWSER || '').trim()) ||
+    Boolean(String(process.env.MUSFY_YTDLP_COOKIE_BROWSERS || '').trim())
+  );
 }
 
 function shouldRetryYtDlpWithBrowserCookies(message) {
@@ -2118,11 +2131,19 @@ function getYtDlpCookieBrowserCandidates() {
     return [...new Set(configured.split(',').map((entry) => entry.trim()).filter(Boolean))];
   }
 
+  if (!isYtDlpBrowserCookiesExplicitlyEnabled()) {
+    return [];
+  }
+
   const detectedBrowser = resolveYtDlpCookieBrowserWithWindowsProfileFallback();
   return detectedBrowser ? [detectedBrowser] : [];
 }
 
 function buildYtDlpAttemptPlans(baseArgs) {
+  if (resolveYtDlpCookiesFilePath()) {
+    return [{ label: 'default', args: [...baseArgs] }];
+  }
+
   return [
     { label: 'default', args: [...baseArgs] },
     ...getYtDlpCookieBrowserCandidates().map((browser) => ({
@@ -2134,6 +2155,8 @@ function buildYtDlpAttemptPlans(baseArgs) {
 
 let resolvedYtDlpCookieBrowser = null;
 let resolvedYtDlpCookieBrowserChecked = false;
+let resolvedYtDlpCookiesFilePath = null;
+let resolvedYtDlpCookiesFileChecked = false;
 
 function getYtDlpCookieProbeDirs(localAppData, appData) {
   return [
@@ -2194,6 +2217,29 @@ function hasYtDlpCookieDatabase(browser, dir) {
   }
 
   return hasChromiumCookiesDatabase(dir);
+}
+
+function resolveYtDlpCookiesFilePath() {
+  if (resolvedYtDlpCookiesFileChecked) {
+    return resolvedYtDlpCookiesFilePath;
+  }
+
+  resolvedYtDlpCookiesFileChecked = true;
+  const configuredPath = String(process.env.MUSFY_YTDLP_COOKIES_FILE || '').trim();
+  const candidates = [
+    configuredPath,
+    path.join(dataDir, 'youtube-cookies.txt'),
+    path.join(dataDir, 'cookies.txt'),
+    path.join(runtimeRootDir, 'youtube-cookies.txt')
+  ].filter(Boolean);
+
+  const match = candidates.find((candidate) => fs.existsSync(candidate));
+  resolvedYtDlpCookiesFilePath = match || null;
+  if (resolvedYtDlpCookiesFilePath) {
+    addLog(`[yt] Cookies externos habilitados via arquivo: ${path.basename(resolvedYtDlpCookiesFilePath)}`);
+  }
+
+  return resolvedYtDlpCookiesFilePath;
 }
 
 function resolveWindowsUserProfileCandidates() {
@@ -2298,6 +2344,14 @@ function resolveYtDlpCookieBrowser() {
 }
 
 function resolveYtDlpCookieBrowserWithWindowsProfileFallback() {
+  if (resolveYtDlpCookiesFilePath()) {
+    return null;
+  }
+
+  if (!isYtDlpBrowserCookiesExplicitlyEnabled()) {
+    return null;
+  }
+
   const browser = resolveYtDlpCookieBrowser();
   if (browser || process.platform !== 'win32') {
     return browser;
@@ -2322,6 +2376,16 @@ function resolveYtDlpCookieBrowserWithWindowsProfileFallback() {
   addLog(`[yt] Perfil de navegador real detectado para cookies: ${path.basename(profileMatch.profileDir)}`);
   addLog(`[yt] Cookies automaticos habilitados via navegador: ${resolvedYtDlpCookieBrowser}`);
   return resolvedYtDlpCookieBrowser;
+}
+
+function appendYtDlpCookieFileArgs(args) {
+  const normalizedArgs = args.includes('--ignore-config') ? [...args] : ['--ignore-config', ...args];
+  const cookiesFile = resolveYtDlpCookiesFilePath();
+  if (!cookiesFile) {
+    return normalizedArgs;
+  }
+
+  return [...normalizedArgs, '--cookies', cookiesFile];
 }
 
 function appendYtDlpBrowserCookiesArgs(args) {
@@ -2603,7 +2667,7 @@ function getYtDlpVideoArgs(url, baseFile) {
     args.push('--js-runtimes', `node:${NODE_RUNTIME_PATH}`);
   }
 
-  return appendYtDlpBrowserCookiesArgs(args);
+  return appendYtDlpCookieFileArgs(args);
 }
 
 async function inspectYoutubeUrl(url, jobId = null) {
@@ -3440,7 +3504,7 @@ async function fetchYoutubePlaylistData(playlistUrl, jobId = null) {
   ];
 
   attempts.forEach((attempt) => {
-    attempt.args = appendYtDlpBrowserCookiesArgs(attempt.args);
+    attempt.args = appendYtDlpCookieFileArgs(attempt.args);
   });
 
   if (fs.existsSync(NODE_RUNTIME_PATH)) {

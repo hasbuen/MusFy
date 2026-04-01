@@ -4287,6 +4287,11 @@ export default function App() {
                 <p className="mt-3 text-sm leading-6 text-gray-300">
                   {youtubeActionModal.selection.subtitle || 'Escolha como o MusFy deve tratar esse resultado do YouTube.'}
                 </p>
+                {isInspectingYoutube ? (
+                  <p className="mt-3 text-xs font-medium uppercase tracking-[0.18em] text-cyan-300/80">
+                    Refinando detalhes da faixa em segundo plano
+                  </p>
+                ) : null}
                 {youtubeActionModal.analysis.kind === 'playlist' && youtubeActionModal.analysis.playlist ? (
                   <p className="mt-3 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm font-medium text-cyan-50">
                     Você pode baixar só a faixa destacada, salvar apenas o vídeo dela ou importar a playlist inteira. Se escolher a playlist completa, o MusFy cria tudo com o nome correto.
@@ -4315,7 +4320,7 @@ export default function App() {
                     setYoutubeActionModal(null);
                     void startYoutubeDownload('single', analysis);
                   }}
-                  disabled={isDownloading || isInspectingYoutube || !youtubeActionModal.analysis.selectedEntry}
+                  disabled={isDownloading || !youtubeActionModal.analysis.selectedEntry}
                   className="rounded-[24px] border border-white/10 bg-black/20 p-5 text-left transition hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <p className="text-sm font-semibold text-white">Salvar só a faixa agora</p>
@@ -4330,7 +4335,7 @@ export default function App() {
                     setYoutubeActionModal(null);
                     void startYoutubeDownload('video', analysis);
                   }}
-                  disabled={isDownloading || isInspectingYoutube || !youtubeActionModal.analysis.selectedEntry}
+                  disabled={isDownloading || !youtubeActionModal.analysis.selectedEntry}
                   className="rounded-[24px] border border-cyan-400/30 bg-cyan-400/10 p-5 text-left transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <p className="text-sm font-semibold text-white">Salvar só o vídeo agora</p>
@@ -4345,7 +4350,7 @@ export default function App() {
                     setYoutubeActionModal(null);
                     enqueueYoutubeDownload('single', analysis);
                   }}
-                  disabled={isInspectingYoutube || !youtubeActionModal.analysis.selectedEntry}
+                  disabled={!youtubeActionModal.analysis.selectedEntry}
                   className="rounded-[24px] border border-white/10 bg-black/20 p-5 text-left transition hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <p className="text-sm font-semibold text-white">Adicionar só a faixa à fila</p>
@@ -4362,7 +4367,7 @@ export default function App() {
                         setYoutubeActionModal(null);
                         void startYoutubeDownload('playlist', analysis);
                       }}
-                      disabled={isDownloading || isInspectingYoutube}
+                      disabled={isDownloading}
                       className="rounded-[24px] border border-cyan-400/30 bg-cyan-400/10 p-5 text-left transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <p className="text-sm font-semibold text-white">Salvar a playlist inteira agora</p>
@@ -4377,7 +4382,7 @@ export default function App() {
                         setYoutubeActionModal(null);
                         enqueueYoutubeDownload('playlist', analysis);
                       }}
-                      disabled={isInspectingYoutube}
+                      disabled={false}
                       className="rounded-[24px] border border-cyan-400/20 bg-cyan-500/5 p-5 text-left transition hover:bg-cyan-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <p className="text-sm font-semibold text-white">Adicionar a playlist inteira à fila</p>
