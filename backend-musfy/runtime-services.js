@@ -13,9 +13,11 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
   let sqliteModule = null;
   let sqliteDb = null;
   let sqliteInitPromise = null;
+  let sqliteErrorMessage = null;
   let embeddedRedisProcess = null;
   let embeddedRedisExitHandler = null;
   let embeddedRedisErrorMessage = null;
+  let redisInitPromise = null;
   let activeRedisUrl = externalRedisUrl;
   let embeddedRedisInfo = externalRedisUrl
     ? { mode: 'external', url: externalRedisUrl, host: null, port: null, binaryPath: null }
@@ -68,6 +70,26 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
     fs.renameSync(sqliteDbPath, backupPath);
     log(`[sqlite] Banco auxiliar corrompido movido para ${backupPath}: ${error.message}`);
     return true;
+  }
+
+  function markEmbeddedRedisStopped(code, signal) {
+    embeddedRedisProcess = null;
+    activeRedisUrl = externalRedisUrl || null;
+    embeddedRedisErrorMessage =
+      code !== null && code !== undefined
+        ? `Redis embarcado encerrou com codigo ${code}`
+        : signal
+          ? `Redis embarcado encerrado por sinal ${signal}`
+          : 'Redis embarcado encerrou sem detalhe';
+    embeddedRedisInfo = {
+      mode: externalRedisUrl ? 'external' : 'error',
+      url: activeRedisUrl || null,
+      host: null,
+      port: null,
+      binaryPath: embeddedRedisInfo?.binaryPath || resolveEmbeddedRedisBinaryPath(),
+      error: embeddedRedisErrorMessage
+    };
+    log(`[redis] ${embeddedRedisErrorMessage}`);
   }
 
   function persistSqlite() {
@@ -136,10 +158,12 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
           }
           runSqliteMigrations();
           persistSqlite();
+          sqliteErrorMessage = null;
           return sqliteDb;
         })
         .catch((error) => {
           sqliteInitPromise = null;
+          sqliteErrorMessage = error.message;
           throw error;
         });
     }
@@ -351,13 +375,32 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
   }
 
   async function ensureRedisReady(allowRecovery = true) {
+    if (redisInitPromise) {
+      return redisInitPromise;
+    }
+
     if (activeRedisUrl) {
+      if (embeddedRedisInfo?.mode === 'external') {
+        return activeRedisUrl;
+      }
+
+      if (embeddedRedisProcess && embeddedRedisProcess.exitCode === null) {
+        return activeRedisUrl;
+      }
+
+      activeRedisUrl = externalRedisUrl || null;
+      embeddedRedisProcess = null;
+      if (externalRedisUrl) {
+        embeddedRedisInfo = { mode: 'external', url: externalRedisUrl, host: null, port: null, binaryPath: null };
+        return activeRedisUrl;
+      }
+    }
+
+    if (embeddedRedisProcess && embeddedRedisProcess.exitCode === null) {
       return activeRedisUrl;
     }
 
-    if (embeddedRedisProcess) {
-      return activeRedisUrl;
-    }
+    embeddedRedisProcess = null;
 
     const binaryPath = resolveEmbeddedRedisBinaryPath();
     if (!fs.existsSync(binaryPath)) {
@@ -389,112 +432,124 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
       redisLogPath
     ];
 
-    try {
-      await new Promise((resolve, reject) => {
-      let settled = false;
-      const timeout = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        reject(new Error('Timeout ao iniciar Redis embarcado.'));
-      }, 15000);
+    redisInitPromise = (async () => {
+      try {
+        await new Promise((resolve, reject) => {
+          let settled = false;
+          const timeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            reject(new Error('Timeout ao iniciar Redis embarcado.'));
+          }, 15000);
 
-      embeddedRedisProcess = spawn(binaryPath, args, {
-        cwd: path.dirname(binaryPath),
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+          embeddedRedisProcess = spawn(binaryPath, args, {
+            cwd: path.dirname(binaryPath),
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
 
-      embeddedRedisExitHandler = (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        reject(new Error(`Redis embarcado finalizou antes de responder. Codigo: ${code}`));
-      };
+          embeddedRedisExitHandler = (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            reject(new Error(`Redis embarcado finalizou antes de responder. Codigo: ${code}`));
+          };
 
-      embeddedRedisProcess.once('error', (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        reject(error);
-      });
+          embeddedRedisProcess.once('error', (error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            reject(error);
+          });
 
-      embeddedRedisProcess.once('exit', embeddedRedisExitHandler);
-      embeddedRedisProcess.stdout?.on('data', (chunk) => {
-        const message = chunk.toString('utf8').trim();
-        if (message) {
-          log(`[redis] ${message}`);
-        }
-      });
-      embeddedRedisProcess.stderr?.on('data', (chunk) => {
-        const message = chunk.toString('utf8').trim();
-        if (message) {
-          log(`[redis] ${message}`);
-        }
-      });
+          embeddedRedisProcess.once('exit', embeddedRedisExitHandler);
+          embeddedRedisProcess.stdout?.on('data', (chunk) => {
+            const message = chunk.toString('utf8').trim();
+            if (message) {
+              log(`[redis] ${message}`);
+            }
+          });
+          embeddedRedisProcess.stderr?.on('data', (chunk) => {
+            const message = chunk.toString('utf8').trim();
+            if (message) {
+              log(`[redis] ${message}`);
+            }
+          });
 
-      const tryPing = async () => {
-        if (settled) return;
-        try {
-          activeRedisUrl = `redis://${host}:${port}`;
-          await sendRedisCommand(['PING']);
-          settled = true;
-          clearTimeout(timeout);
-          embeddedRedisProcess.removeListener('exit', embeddedRedisExitHandler);
-          embeddedRedisExitHandler = null;
-          resolve();
-          return;
-        } catch (_error) {
+          const tryPing = async () => {
+            if (settled) return;
+            try {
+              activeRedisUrl = `redis://${host}:${port}`;
+              await sendRedisCommand(['PING']);
+              settled = true;
+              clearTimeout(timeout);
+              embeddedRedisProcess.removeListener('exit', embeddedRedisExitHandler);
+              embeddedRedisExitHandler = null;
+              embeddedRedisProcess.on('exit', (code, signal) => {
+                markEmbeddedRedisStopped(code, signal);
+              });
+              resolve();
+              return;
+            } catch (_error) {
+              setTimeout(tryPing, 250);
+            }
+          };
+
           setTimeout(tryPing, 250);
+        });
+      } catch (error) {
+        activeRedisUrl = externalRedisUrl || null;
+        const redisLogTail = readRedisLogTail(redisLogPath);
+        const isCorruptedAof = /Bad file format reading the append only file/i.test(redisLogTail);
+
+        if (embeddedRedisProcess) {
+          try {
+            embeddedRedisProcess.kill('SIGKILL');
+          } catch (_killError) {
+            // ignora
+          }
         }
-      };
+        embeddedRedisProcess = null;
+        embeddedRedisExitHandler = null;
 
-      setTimeout(tryPing, 250);
-      });
-    } catch (error) {
-      activeRedisUrl = externalRedisUrl || null;
-      const redisLogTail = readRedisLogTail(redisLogPath);
-      const isCorruptedAof = /Bad file format reading the append only file/i.test(redisLogTail);
-
-      if (embeddedRedisProcess) {
-        try {
-          embeddedRedisProcess.kill('SIGKILL');
-        } catch (_killError) {
-          // ignora
+        if (allowRecovery && isCorruptedAof) {
+          log('[redis] AOF corrompido detectado. Limpando persistencia local e tentando subir novamente.');
+          cleanupRedisPersistence(redisLogPath);
+          redisInitPromise = null;
+          return ensureRedisReady(false);
         }
-      }
-      embeddedRedisProcess = null;
-      embeddedRedisExitHandler = null;
 
-      if (allowRecovery && isCorruptedAof) {
-        log('[redis] AOF corrompido detectado. Limpando persistencia local e tentando subir novamente.');
-        cleanupRedisPersistence(redisLogPath);
-        return ensureRedisReady(false);
+        embeddedRedisErrorMessage = error.message;
+        embeddedRedisInfo = {
+          mode: externalRedisUrl ? 'external' : 'error',
+          url: activeRedisUrl || null,
+          host: null,
+          port: null,
+          binaryPath,
+          error: redisLogTail ? `${error.message} | ${redisLogTail.split(/\r?\n/).filter(Boolean).slice(-1)[0]}` : error.message
+        };
+        log(`[redis] Falha ao iniciar cache embarcado: ${error.message}`);
+        return activeRedisUrl || null;
       }
 
-      embeddedRedisErrorMessage = error.message;
+      activeRedisUrl = `redis://${host}:${port}`;
+      embeddedRedisErrorMessage = null;
       embeddedRedisInfo = {
-        mode: 'error',
-        url: null,
-        host: null,
-        port: null,
-        binaryPath,
-        error: redisLogTail ? `${error.message} | ${redisLogTail.split(/\r?\n/).filter(Boolean).slice(-1)[0]}` : error.message
+        mode: 'embedded',
+        url: activeRedisUrl,
+        host,
+        port,
+        binaryPath
       };
-      log(`[redis] Falha ao iniciar cache embarcado: ${error.message}`);
-      return null;
-    }
+      log(`[redis] Cache local embarcado ativo em ${activeRedisUrl}`);
+      return activeRedisUrl;
+    })();
 
-    activeRedisUrl = `redis://${host}:${port}`;
-    embeddedRedisErrorMessage = null;
-    embeddedRedisInfo = {
-      mode: 'embedded',
-      url: activeRedisUrl,
-      host,
-      port,
-      binaryPath
-    };
-    log(`[redis] Cache local embarcado ativo em ${activeRedisUrl}`);
-    return activeRedisUrl;
+    try {
+      return await redisInitPromise;
+    } finally {
+      redisInitPromise = null;
+    }
   }
 
   function parseRedisValue(buffer) {
@@ -571,34 +626,52 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
   }
 
   async function getRedisJson(key) {
+    if (!activeRedisUrl) {
+      await ensureRedisReady();
+    }
     if (!activeRedisUrl) return null;
     try {
       const value = await sendRedisCommand(['GET', key]);
       return value ? JSON.parse(String(value)) : null;
     } catch (error) {
       console.error(`[runtime-services] Redis GET failed for ${key}:`, error);
+      if (embeddedRedisInfo?.mode === 'embedded' || embeddedRedisInfo?.mode === 'error') {
+        await ensureRedisReady();
+      }
       return null;
     }
   }
 
   async function setRedisJson(key, value, ttlSeconds) {
+    if (!activeRedisUrl) {
+      await ensureRedisReady();
+    }
     if (!activeRedisUrl) return false;
     try {
       await sendRedisCommand(['SETEX', key, String(ttlSeconds), JSON.stringify(value)]);
       return true;
     } catch (error) {
       console.error(`[runtime-services] Redis SETEX failed for ${key}:`, error);
+      if (embeddedRedisInfo?.mode === 'embedded' || embeddedRedisInfo?.mode === 'error') {
+        await ensureRedisReady();
+      }
       return false;
     }
   }
 
   async function publishRedisEvent(channel, payload) {
+    if (!activeRedisUrl) {
+      await ensureRedisReady();
+    }
     if (!activeRedisUrl) return false;
     try {
       await sendRedisCommand(['PUBLISH', channel, JSON.stringify(payload)]);
       return true;
     } catch (error) {
       console.error(`[runtime-services] Redis PUBLISH failed for ${channel}:`, error);
+      if (embeddedRedisInfo?.mode === 'embedded' || embeddedRedisInfo?.mode === 'error') {
+        await ensureRedisReady();
+      }
       return false;
     }
   }
@@ -628,7 +701,8 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
     return {
       sqlite: {
         path: sqliteDbPath,
-        ready: Boolean(sqliteDb)
+        ready: Boolean(sqliteDb),
+        error: sqliteErrorMessage || null
       },
       redis: {
         ...embeddedRedisInfo,
@@ -639,8 +713,19 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
   }
 
   async function bootstrap() {
-    await ensureSqliteReady();
-    await ensureRedisReady();
+    const [sqliteResult, redisResult] = await Promise.allSettled([ensureSqliteReady(), ensureRedisReady()]);
+
+    if (sqliteResult.status === 'rejected') {
+      sqliteErrorMessage = sqliteResult.reason?.message || String(sqliteResult.reason || 'Falha no SQLite');
+      console.error('[runtime-services] SQLite bootstrap failed:', sqliteResult.reason);
+    }
+
+    if (redisResult.status === 'rejected') {
+      embeddedRedisErrorMessage = redisResult.reason?.message || String(redisResult.reason || 'Falha no Redis');
+      console.error('[runtime-services] Redis bootstrap failed:', redisResult.reason);
+    }
+
+    return getServiceStorageSummary();
   }
 
   async function shutdown() {

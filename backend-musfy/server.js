@@ -1234,7 +1234,7 @@ void runtimeServices
     runtimeBootstrapState = {
       phase: 'ready',
       ready: Boolean(storage?.sqlite?.ready && ['embedded', 'external'].includes(String(storage?.redis?.mode || ''))),
-      error: storage?.redis?.error || null
+      error: storage?.sqlite?.error || storage?.redis?.error || null
     };
     void processQueuedDownloadJobs();
   })
