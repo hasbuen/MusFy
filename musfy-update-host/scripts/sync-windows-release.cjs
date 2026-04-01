@@ -3,7 +3,7 @@ const path = require('path');
 
 const hostRoot = path.resolve(__dirname, '..');
 const targetDir = path.join(hostRoot, 'public', 'windows');
-const requiredFiles = ['latest.yml', 'MusFy.exe', 'MusFy.exe.blockmap'];
+const requiredFiles = ['latest.yml', 'MusFy-Setup.exe', 'MusFy-Setup.exe.blockmap'];
 const sourceArg = process.argv[2];
 const defaultReleaseRoot = path.resolve(hostRoot, '..', 'frontend-musfy', 'release', 'github');
 

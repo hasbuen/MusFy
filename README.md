@@ -4,7 +4,7 @@ Desktop player for Windows with local library, YouTube downloads, mini player, t
 
 [Baixar a ultima release](https://github.com/hasbuen/Projects/releases/latest)  
 [Abrir landing page](https://hasbuen.github.io/Projects/)  
-[Instalador Windows](https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe)
+[Instalador Windows](https://github.com/hasbuen/Projects/releases/latest/download/MusFy-Setup.exe)
 
 ## O que o MusFy entrega
 
@@ -27,7 +27,7 @@ MusFy foi pensado para ficar aberto o dia inteiro. A proposta e simples: abrir r
 
 ## Distribuicao
 
-- Releases: `latest.yml`, `MusFy.exe` e `MusFy.exe.blockmap` publicados no GitHub Releases.
+- Releases: `latest.yml`, `MusFy-Setup.exe` e `MusFy-Setup.exe.blockmap` publicados no GitHub Releases.
 - Landing page: publicada via GitHub Pages a partir de `musfy-update-host/public`.
 - Notas da versao: arquivos em `frontend-musfy/release-notes`.
 

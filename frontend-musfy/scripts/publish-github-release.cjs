@@ -4,7 +4,7 @@ const { spawnSync } = require('child_process');
 
 const DEFAULT_GITHUB_OWNER = 'hasbuen';
 const DEFAULT_GITHUB_REPO = 'Projects';
-const REQUIRED_ARTIFACTS = ['latest.yml', 'MusFy.exe', 'MusFy.exe.blockmap'];
+const REQUIRED_ARTIFACTS = ['latest.yml', 'MusFy-Setup.exe', 'MusFy-Setup.exe.blockmap'];
 const DEFAULT_GITHUB_MAX_ATTEMPTS = 4;
 const DEFAULT_GITHUB_RETRY_DELAY_MS = 2500;
 

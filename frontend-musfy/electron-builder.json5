@@ -84,10 +84,10 @@
         ]
       }
     ],
-    "artifactName": "MusFy.${ext}"
+    "artifactName": "MusFy-Setup.${ext}"
   },
   "nsis": {
-    "artifactName": "MusFy.${ext}",
+    "artifactName": "MusFy-Setup.${ext}",
     "oneClick": false,
     "perMachine": true,
     "deleteAppDataOnUninstall": true,

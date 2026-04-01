@@ -787,7 +787,7 @@
           </div>
 
           <div class="cta-row">
-            <a id="download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe" target="_blank" rel="noreferrer">
+            <a id="download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/latest/download/MusFy-Setup.exe" target="_blank" rel="noreferrer">
               Baixar instalador
             </a>
             <a id="release-button" class="button button-secondary" href="https://github.com/hasbuen/Projects/releases/latest" target="_blank" rel="noreferrer">
@@ -945,7 +945,7 @@
               <div class="release-meta">
                 <div>
                   <label>Asset principal</label>
-                  <strong id="release-asset-name">MusFy.exe</strong>
+                  <strong id="release-asset-name">MusFy-Setup.exe</strong>
                 </div>
                 <div>
                   <label>Canal</label>
@@ -959,7 +959,7 @@
             </div>
 
             <div class="cta-row">
-              <a id="secondary-download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/latest/download/MusFy.exe" target="_blank" rel="noreferrer">
+              <a id="secondary-download-button" class="button button-primary" href="https://github.com/hasbuen/Projects/releases/latest/download/MusFy-Setup.exe" target="_blank" rel="noreferrer">
                 Instalar agora
               </a>
               <a class="button button-secondary" href="https://github.com/hasbuen/Projects" target="_blank" rel="noreferrer">
@@ -985,7 +985,7 @@
           <article class="install-card">
             <small>1</small>
             <h3>Baixe o instalador</h3>
-            <p>Use o botao principal para puxar o `MusFy.exe` publicado no release mais recente.</p>
+            <p>Use o botao principal para puxar o `MusFy-Setup.exe` publicado no release mais recente.</p>
           </article>
 
           <article class="install-card">
@@ -1015,17 +1015,17 @@
       const repoName = "Projects";
       const repoUrl = `https://github.com/${repoOwner}/${repoName}`;
       const latestReleaseUrl = `${repoUrl}/releases/latest`;
-      const latestDownloadUrl = `${latestReleaseUrl}/download/MusFy.exe`;
+      const latestDownloadUrl = `${latestReleaseUrl}/download/MusFy-Setup.exe`;
       const latestReleaseApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`;
       const localLatestYmlUrl = new URL("./windows/latest.yml", window.location.href).toString();
-      const localInstallerUrl = new URL("./windows/MusFy.exe", window.location.href).toString();
+      const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
         version: "0.1.3",
         name: "MusFy 0.1.3",
         size: 209324280,
         publishedAt: "2026-03-31T17:06:54.652Z",
-        assetName: "MusFy.exe",
+        assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
@@ -1112,7 +1112,7 @@
           size,
           publishedAt: releaseDate,
           notes,
-          assetName: "MusFy.exe",
+          assetName: "MusFy-Setup.exe",
           downloadUrl: localInstallerUrl,
           releaseUrl: latestReleaseUrl
         };
@@ -1127,7 +1127,7 @@
 
           const release = await response.json();
           const installer = Array.isArray(release.assets)
-            ? release.assets.find((asset) => asset && asset.name === "MusFy.exe")
+            ? release.assets.find((asset) => asset && asset.name === "MusFy-Setup.exe")
             : null;
 
           renderRelease({
