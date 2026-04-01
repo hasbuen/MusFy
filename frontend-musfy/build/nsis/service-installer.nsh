@@ -2,6 +2,48 @@
 !define MUSFY_SERVICE_NAME "MusFyHostService"
 !define MUSFY_LEGACY_SERVICE_NAME "MusFyService"
 
+!macro KillMusFyProcesses
+  DetailPrint "Encerrando processos do MusFy..."
+  nsExec::ExecToLog 'taskkill /IM "MusFy.exe" /F /T'
+  Pop $0
+  nsExec::ExecToLog 'taskkill /IM "MusFyServiceHost.exe" /F /T'
+  Pop $0
+  nsExec::ExecToLog 'taskkill /IM "musfyservicehost.exe" /F /T'
+  Pop $0
+  Sleep 1200
+!macroend
+
+!macro RemoveMusFyFiles
+  DetailPrint "Removendo dados locais do MusFy..."
+
+  SetShellVarContext current
+  Delete "$DESKTOP\MusFy.lnk"
+  Delete "$SMPROGRAMS\MusFy.lnk"
+  Delete "$SMPROGRAMS\MusFy\MusFy.lnk"
+  Delete "$SMPROGRAMS\MusFy\Desinstalar MusFy.lnk"
+  RMDir /r "$SMPROGRAMS\MusFy"
+
+  SetShellVarContext all
+  Delete "$DESKTOP\MusFy.lnk"
+  Delete "$SMPROGRAMS\MusFy.lnk"
+  Delete "$SMPROGRAMS\MusFy\MusFy.lnk"
+  Delete "$SMPROGRAMS\MusFy\Desinstalar MusFy.lnk"
+  RMDir /r "$SMPROGRAMS\MusFy"
+
+  RMDir /r "$APPDATA\MusFy"
+  RMDir /r "$APPDATA\frontend-musfy"
+  RMDir /r "$APPDATA\Electron\musfy"
+  RMDir /r "$LOCALAPPDATA\MusFy"
+  RMDir /r "$LOCALAPPDATA\Programs\MusFy"
+  RMDir /r "$LOCALAPPDATA\frontend-musfy-updater"
+  RMDir /r "$APPDATA\MusFy"
+
+  DeleteRegKey HKCU "Software\MusFy"
+  DeleteRegKey HKLM "Software\MusFy"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MusFy"
+  DeleteRegKey HKLM "Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\MusFy"
+!macroend
+
 !macro StopMusFyService
   DetailPrint "Parando o servico MusFy..."
   nsExec::ExecToLog 'sc.exe stop "${MUSFY_SERVICE_NAME}"'
@@ -46,15 +88,19 @@
 !macroend
 
 !macro customInit
+  !insertmacro KillMusFyProcesses
   !insertmacro StopMusFyService
 !macroend
 
 !macro customInstall
+  !insertmacro KillMusFyProcesses
   !insertmacro DeleteMusFyService
   !insertmacro CreateMusFyService
 !macroend
 
 !macro customUnInstall
+  !insertmacro KillMusFyProcesses
   !insertmacro StopMusFyService
   !insertmacro DeleteMusFyService
+  !insertmacro RemoveMusFyFiles
 !macroend

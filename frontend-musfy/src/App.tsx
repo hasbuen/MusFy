@@ -2058,6 +2058,45 @@ export default function App() {
     }
   };
 
+  const buildFallbackYoutubeTrackAnalysis = (result: YoutubeSearchResult): YoutubeAnalysis => ({
+    kind: 'single',
+    url: result.url,
+    videoId: result.id || null,
+    playlistId: null,
+    hasPlaylist: false,
+    selectedEntry: {
+      id: result.id || null,
+      url: result.url,
+      title: result.title || null
+    },
+    playlist: null
+  });
+
+  const buildFallbackYoutubePlaylistAnalysis = (result: YoutubeSearchPlaylistResult): YoutubeAnalysis => ({
+    kind: 'playlist',
+    url: result.url,
+    videoId: result.previewEntries?.[0]?.id || null,
+    playlistId: result.id || null,
+    hasPlaylist: true,
+    selectedEntry: result.previewEntries?.[0]
+      ? {
+          id: result.previewEntries[0].id || null,
+          url: result.previewEntries[0].url,
+          title: result.previewEntries[0].title || null
+        }
+      : null,
+    playlist: {
+      id: result.id || null,
+      title: result.title,
+      entryCount: Number(result.entryCount || result.previewEntries?.length || 0),
+      entries: (result.previewEntries || []).map((entry) => ({
+        id: entry.id || null,
+        url: entry.url,
+        title: entry.title
+      }))
+    }
+  });
+
   const selectYoutubeSearchResult = async (result: YoutubeSearchResult) => {
     const baseSelection = {
       kind: 'track',
@@ -2072,6 +2111,10 @@ export default function App() {
     setYoutubeAnalysis(null);
     setLastAnalyzedUrl('');
     setDownloadMessage(`Resultado selecionado: "${result.title}". Preparando ações de download...`);
+    setYoutubeActionModal({
+      analysis: buildFallbackYoutubeTrackAnalysis(result),
+      selection: baseSelection
+    });
     const analysis = await inspectYoutubeLink(result.url);
     if (analysis?.selectedEntry?.title) {
       setYoutubeTitle(analysis.selectedEntry.title);
@@ -2102,6 +2145,10 @@ export default function App() {
     setYoutubeAnalysis(null);
     setLastAnalyzedUrl('');
     setDownloadMessage(`Playlist selecionada: "${result.title}". Carregando opções de faixa e playlist...`);
+    setYoutubeActionModal({
+      analysis: buildFallbackYoutubePlaylistAnalysis(result),
+      selection: baseSelection
+    });
     const analysis = await inspectYoutubeLink(result.url);
     if (analysis?.selectedEntry?.title) {
       setYoutubeTitle(analysis.selectedEntry.title);

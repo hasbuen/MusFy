@@ -2134,6 +2134,89 @@ function buildYtDlpAttemptPlans(baseArgs) {
 let resolvedYtDlpCookieBrowser = null;
 let resolvedYtDlpCookieBrowserChecked = false;
 
+function getYtDlpCookieProbeDirs(localAppData, appData) {
+  return [
+    { browser: 'edge', dir: localAppData ? path.join(localAppData, 'Microsoft', 'Edge', 'User Data') : '' },
+    { browser: 'chrome', dir: localAppData ? path.join(localAppData, 'Google', 'Chrome', 'User Data') : '' },
+    { browser: 'brave', dir: localAppData ? path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data') : '' },
+    { browser: 'firefox', dir: appData ? path.join(appData, 'Mozilla', 'Firefox', 'Profiles') : '' }
+  ];
+}
+
+function resolveWindowsUserProfileCandidates() {
+  const candidates = [];
+  const seen = new Set();
+  const pushCandidate = (profileDir) => {
+    const normalized = String(profileDir || '').trim();
+    if (!normalized || seen.has(normalized) || !fs.existsSync(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  pushCandidate(process.env.MUSFY_INTERACTIVE_USERPROFILE || '');
+  pushCandidate(process.env.MUSFY_COOKIE_USERPROFILE || '');
+  pushCandidate(process.env.USERPROFILE || '');
+
+  const systemDrive = String(process.env.SystemDrive || 'C:').trim() || 'C:';
+  const usersRoot = path.join(systemDrive, 'Users');
+  if (!fs.existsSync(usersRoot)) {
+    return candidates;
+  }
+
+  const blockedNames = new Set([
+    'all users',
+    'default',
+    'default user',
+    'defaultuser0',
+    'public',
+    'systemprofile',
+    'wdagutilityaccount'
+  ]);
+
+  const discovered = fs
+    .readdirSync(usersRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !blockedNames.has(entry.name.toLowerCase()))
+    .map((entry) => {
+      const profileDir = path.join(usersRoot, entry.name);
+      let modifiedAt = 0;
+      try {
+        modifiedAt = fs.statSync(profileDir).mtimeMs || 0;
+      } catch (_error) {
+        modifiedAt = 0;
+      }
+
+      return { profileDir, modifiedAt };
+    })
+    .sort((a, b) => b.modifiedAt - a.modifiedAt);
+
+  discovered.forEach((entry) => pushCandidate(entry.profileDir));
+  return candidates;
+}
+
+function tryResolveYtDlpBrowserFromProfile(profileDir) {
+  const normalizedProfile = String(profileDir || '').trim();
+  if (!normalizedProfile) {
+    return null;
+  }
+
+  const localAppData = path.join(normalizedProfile, 'AppData', 'Local');
+  const appData = path.join(normalizedProfile, 'AppData', 'Roaming');
+  const match = getYtDlpCookieProbeDirs(localAppData, appData).find((entry) => entry.dir && fs.existsSync(entry.dir));
+  if (!match) {
+    return null;
+  }
+
+  return {
+    browser: match.browser,
+    profileDir: normalizedProfile,
+    localAppData,
+    appData
+  };
+}
+
 function resolveYtDlpCookieBrowser() {
   if (resolvedYtDlpCookieBrowserChecked) {
     return resolvedYtDlpCookieBrowser;
@@ -2164,8 +2247,35 @@ function resolveYtDlpCookieBrowser() {
   return resolvedYtDlpCookieBrowser;
 }
 
-function appendYtDlpBrowserCookiesArgs(args) {
+function resolveYtDlpCookieBrowserWithWindowsProfileFallback() {
   const browser = resolveYtDlpCookieBrowser();
+  if (browser || process.platform !== 'win32') {
+    return browser;
+  }
+
+  const profileMatch = resolveWindowsUserProfileCandidates()
+    .map((profileDir) => tryResolveYtDlpBrowserFromProfile(profileDir))
+    .find(Boolean);
+
+  if (!profileMatch) {
+    return null;
+  }
+
+  const driveRoot = path.parse(profileMatch.profileDir).root.replace(/[\\/]+$/, '');
+  process.env.USERPROFILE = profileMatch.profileDir;
+  process.env.HOMEDRIVE = driveRoot;
+  process.env.HOMEPATH = profileMatch.profileDir.slice(driveRoot.length) || '\\';
+  process.env.LOCALAPPDATA = profileMatch.localAppData;
+  process.env.APPDATA = profileMatch.appData;
+  resolvedYtDlpCookieBrowser = profileMatch.browser;
+  resolvedYtDlpCookieBrowserChecked = true;
+  addLog(`[yt] Perfil de navegador real detectado para cookies: ${path.basename(profileMatch.profileDir)}`);
+  addLog(`[yt] Cookies automaticos habilitados via navegador: ${resolvedYtDlpCookieBrowser}`);
+  return resolvedYtDlpCookieBrowser;
+}
+
+function appendYtDlpBrowserCookiesArgs(args) {
+  const browser = resolveYtDlpCookieBrowserWithWindowsProfileFallback();
   if (!browser) {
     return args;
   }

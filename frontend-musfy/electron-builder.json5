@@ -90,6 +90,7 @@
     "artifactName": "MusFy.${ext}",
     "oneClick": false,
     "perMachine": true,
+    "deleteAppDataOnUninstall": true,
     "allowToChangeInstallationDirectory": true,
     "allowElevation": true,
     "installerIcon": "src/assets/tray.ico",
