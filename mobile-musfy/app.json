@@ -8,6 +8,7 @@
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.musfy.mobile",
+      "usesCleartextTraffic": true,
       "permissions": [
         "INTERNET"
       ]

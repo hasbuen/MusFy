@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -11,7 +14,28 @@ import {
   View
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { fetchHealth, fetchPlaylists, fetchServiceStorage, fetchSongs, registerAndroidDevice } from './src/api/client';
+import { Audio, type AVPlaybackStatus } from 'expo-av';
+import { LinearGradient } from 'expo-linear-gradient';
+import {
+  addSongToPlaylist,
+  buildAudioStreamUrl,
+  createPlaylist,
+  deletePlaylist,
+  enqueueYoutubeDownload,
+  fetchDownloadJobs,
+  fetchHealth,
+  fetchPlaylists,
+  fetchSongs,
+  loginUser,
+  normalizeBaseUrl,
+  pauseDownloadJob,
+  registerAndroidDevice,
+  registerUser,
+  removeSongFromPlaylist,
+  renamePlaylist,
+  resumeDownloadJob,
+  toggleFavorite
+} from './src/api/client';
 import {
   cachePlaylists,
   cacheSongs,
@@ -22,452 +46,912 @@ import {
   listOfflineTracks,
   setSetting
 } from './src/storage/database';
-import { downloadPlaylistOffline, downloadSongOffline } from './src/storage/offline';
-import type { HealthStatus, OfflineTrack, Playlist, ServiceStorage, Song } from './src/types';
+import { downloadPlaylistOffline, downloadSongOffline, removeSongOffline } from './src/storage/offline';
+import type {
+  DownloadJob,
+  DownloadMode,
+  HealthStatus,
+  OfflineTrack,
+  Playlist,
+  PlaylistScope,
+  Song,
+  SongSection,
+  User
+} from './src/types';
 
-type TabKey = 'server' | 'library' | 'playlists' | 'offline';
+type Tab = 'server' | 'library' | 'playlists' | 'offline' | 'downloads';
+type Tone = 'info' | 'success' | 'error';
+type AuthMode = 'login' | 'register';
+type Source = 'stream' | 'offline';
 
-const SERVER_URL_KEY = 'server_url';
-const DEVICE_ID_KEY = 'device_id';
-const DEVICE_NAME_KEY = 'device_name';
-const BRAND = '#22c55e';
+const SETTINGS = {
+  baseUrl: 'mobile.baseUrl',
+  user: 'mobile.user',
+  deviceId: 'mobile.deviceId'
+} as const;
 
-function formatBytes(value?: number | null) {
-  if (!value) return 'Tamanho desconhecido';
-  const size = value / (1024 * 1024);
-  return `${size.toFixed(1)} MB`;
+const TABS: Tab[] = ['server', 'library', 'playlists', 'offline', 'downloads'];
+const TAB_LABEL: Record<Tab, string> = {
+  server: 'Servidor',
+  library: 'Biblioteca',
+  playlists: 'Playlists',
+  offline: 'Offline',
+  downloads: 'Fila'
+};
+
+const SONG_SECTIONS: SongSection[] = ['library', 'favorites', 'explore'];
+const SONG_LABEL: Record<SongSection, string> = {
+  library: 'Minha',
+  favorites: 'Favoritas',
+  explore: 'Explorar'
+};
+
+const PLAYLIST_SCOPES: PlaylistScope[] = ['mine', 'discover'];
+const PLAYLIST_LABEL: Record<PlaylistScope, string> = {
+  mine: 'Minhas',
+  discover: 'Descobrir'
+};
+
+const DOWNLOAD_MODES: DownloadMode[] = ['auto', 'audio', 'video', 'playlist'];
+const DOWNLOAD_LABEL: Record<DownloadMode, string> = {
+  auto: 'Auto',
+  audio: 'Audio',
+  video: 'Video',
+  playlist: 'Playlist'
+};
+
+function id() {
+  return `musfy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createStableId() {
-  return `android-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+function err(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error) return error;
+  return fallback;
 }
 
-function getServerCandidates(currentValue: string) {
-  const trimmed = currentValue.trim().replace(/\/+$/, '');
-  const candidates = new Set<string>();
-
-  if (trimmed) {
-    candidates.add(trimmed);
-
-    try {
-      const url = new URL(trimmed);
-      candidates.add(`http://${url.hostname}:3001`);
-      candidates.add(`http://${url.hostname}:3000`);
-    } catch {
-      // Ignore invalid manual input while building candidate list.
-    }
+function parseUser(raw: string | null) {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as User;
+    return value?.id ? value : null;
+  } catch {
+    return null;
   }
-
-  candidates.add('http://10.0.2.2:3001');
-  candidates.add('http://127.0.0.1:3001');
-  candidates.add('http://localhost:3001');
-
-  return [...candidates];
 }
 
-function getPlaylistCover(playlist: Playlist) {
-  return playlist.songs?.find((song) => song.thumbnail)?.thumbnail || null;
+function bytes(value: number) {
+  if (!value) return '0 B';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function getSongSubtitle(song: Song) {
-  const parts = [song.artist || 'Artista desconhecido'];
-  if (song.uploadedByUserName) {
-    parts.push(`por ${song.uploadedByUserName}`);
-  }
-  return parts.join(' · ');
-}
-
-function getStorageLabel(serviceStorage: ServiceStorage) {
-  const sqlite = serviceStorage.sqlite?.ready ? 'SQLite pronto' : 'SQLite aguardando';
-  const redis = serviceStorage.redis?.mode ? `Redis ${serviceStorage.redis.mode}` : 'Redis sem status';
-  return `${sqlite} · ${redis}`;
+function mmss(value: number) {
+  const total = Math.max(0, Math.floor(value / 1000));
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabKey>('server');
-  const [serverUrl, setServerUrlState] = useState('http://192.168.0.10:3001');
-  const [songs, setSongs] = useState<Song[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [offlineTracks, setOfflineTracks] = useState<OfflineTrack[]>([]);
-  const [serviceStorage, setServiceStorage] = useState<ServiceStorage>({});
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('server');
+  const [banner, setBanner] = useState<{ tone: Tone; text: string } | null>(null);
+
+  const [baseUrl, setBaseUrl] = useState('');
+  const [baseUrlInput, setBaseUrlInput] = useState('');
+  const [deviceId, setDeviceId] = useState('');
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [statusMessage, setStatusMessage] = useState('Conecte o app ao servidor MusFy da sua rede.');
-  const [isBooting, setIsBooting] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isDiscovering, setIsDiscovering] = useState(false);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [deviceId, setDeviceId] = useState<string>('');
-  const [deviceName, setDeviceName] = useState('MusFy Android');
 
-  const summary = useMemo(
-    () => ({
-      songs: songs.length,
-      playlists: playlists.length,
-      offline: offlineTracks.length
-    }),
-    [offlineTracks.length, playlists.length, songs.length]
-  );
+  const [user, setUser] = useState<User | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
 
-  const hydrateLocalState = async () => {
-    const [savedServerUrl, cachedSongs, cachedPlaylists, savedOfflineTracks, savedDeviceId, savedDeviceName] = await Promise.all([
-      getSetting(SERVER_URL_KEY),
-      getCachedSongs(),
-      getCachedPlaylists(),
-      listOfflineTracks(),
-      getSetting(DEVICE_ID_KEY),
-      getSetting(DEVICE_NAME_KEY)
-    ]);
+  const [songs, setSongs] = useState<Song[]>([]);
+  const [section, setSection] = useState<SongSection>('library');
+  const [songBusyId, setSongBusyId] = useState<string | null>(null);
 
-    if (savedServerUrl) {
-      setServerUrlState(savedServerUrl);
-    }
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistScope, setPlaylistScope] = useState<PlaylistScope>('mine');
+  const [playlistName, setPlaylistName] = useState('');
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [playlistBusyId, setPlaylistBusyId] = useState<string | null>(null);
 
-    const resolvedDeviceId = savedDeviceId || createStableId();
-    const resolvedDeviceName = savedDeviceName || 'MusFy Android';
+  const [offlineTracks, setOfflineTracks] = useState<OfflineTrack[]>([]);
+  const [offlineBusyId, setOfflineBusyId] = useState<string | null>(null);
+  const [offlineProgress, setOfflineProgress] = useState('');
 
-    await Promise.all([setSetting(DEVICE_ID_KEY, resolvedDeviceId), setSetting(DEVICE_NAME_KEY, resolvedDeviceName)]);
+  const [jobs, setJobs] = useState<DownloadJob[]>([]);
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const [downloadTitle, setDownloadTitle] = useState('');
+  const [downloadArtist, setDownloadArtist] = useState('');
+  const [downloadMode, setDownloadMode] = useState<DownloadMode>('auto');
+  const [includeVideo, setIncludeVideo] = useState(false);
+  const [jobsBusy, setJobsBusy] = useState(false);
 
-    setDeviceId(resolvedDeviceId);
-    setDeviceName(resolvedDeviceName);
-    setSongs(cachedSongs);
-    setPlaylists(cachedPlaylists);
-    setOfflineTracks(savedOfflineTracks);
+  const [playerBusy, setPlayerBusy] = useState(false);
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [currentTitle, setCurrentTitle] = useState('');
+  const [currentArtist, setCurrentArtist] = useState('');
+  const [currentSource, setCurrentSource] = useState<Source | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(0);
 
-    return {
-      savedServerUrl: savedServerUrl || '',
-      resolvedDeviceId,
-      resolvedDeviceName
-    };
-  };
+  const selectedPlaylist = playlists.find((item) => item.id === selectedPlaylistId) || null;
+  const normalized = normalizeBaseUrl(baseUrl);
+  const currentUserId = user?.id || null;
+  const offlineBytes = offlineTracks.reduce((sum, track) => sum + Number(track.sizeBytes || 0), 0);
 
-  const syncServer = async (
-    explicitUrl?: string,
-    explicitDeviceId?: string,
-    explicitDeviceName?: string,
-    shouldPersist = true
-  ) => {
-    const baseUrl = (explicitUrl || serverUrl).trim().replace(/\/+$/, '');
-    if (!baseUrl) {
-      setStatusMessage('Informe a URL do servidor MusFy.');
-      return false;
-    }
+  function toast(tone: Tone, text: string) {
+    setBanner({ tone, text });
+  }
 
-    const resolvedDeviceId = explicitDeviceId || deviceId || createStableId();
-    const resolvedDeviceName = explicitDeviceName || deviceName || 'MusFy Android';
+  async function persistUser(next: User | null) {
+    await setSetting(SETTINGS.user, next ? JSON.stringify(next) : '');
+    setUser(next);
+  }
 
-    setIsSyncing(true);
-    setStatusMessage('Sincronizando biblioteca, playlists e status do servidor...');
+  async function loadOffline() {
+    setOfflineTracks(await listOfflineTracks());
+  }
 
+  async function bootstrap() {
+    setBooting(true);
     try {
-      if (shouldPersist) {
-        await setSetting(SERVER_URL_KEY, baseUrl);
-      }
-
-      const nextHealth = await fetchHealth(baseUrl);
-      const [remoteSongs, remotePlaylists, storage] = await Promise.all([
-        fetchSongs(baseUrl),
-        fetchPlaylists(baseUrl),
-        fetchServiceStorage(baseUrl).catch(() => nextHealth.storage || {})
-      ]);
-
-      await Promise.all([
-        cacheSongs(remoteSongs),
-        cachePlaylists(remotePlaylists),
-        registerAndroidDevice(baseUrl, resolvedDeviceId, resolvedDeviceName),
-        setSetting(DEVICE_ID_KEY, resolvedDeviceId),
-        setSetting(DEVICE_NAME_KEY, resolvedDeviceName)
-      ]);
-
-      setDeviceId(resolvedDeviceId);
-      setDeviceName(resolvedDeviceName);
-      setServerUrlState(baseUrl);
-      setSongs(remoteSongs);
-      setPlaylists(remotePlaylists);
-      setServiceStorage(storage);
-      setHealth(nextHealth);
-      setStatusMessage(
-        nextHealth.ok
-          ? `Servidor conectado em ${baseUrl}. Biblioteca sincronizada com ${remoteSongs.length} faixas e ${remotePlaylists.length} playlists.`
-          : `Servidor respondeu em ${baseUrl}, mas sem status OK.`
-      );
-      return nextHealth.ok;
-    } catch (error: any) {
-      setStatusMessage(`Falha ao sincronizar com ${baseUrl}: ${error?.message || 'erro desconhecido'}`);
-      return false;
+      await initDatabase();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        staysActiveInBackground: false
+      });
+      const [storedBaseUrl, storedUser, storedDeviceId, cachedSongs, cachedPlaylists, cachedOffline] =
+        await Promise.all([
+          getSetting(SETTINGS.baseUrl),
+          getSetting(SETTINGS.user),
+          getSetting(SETTINGS.deviceId),
+          getCachedSongs(),
+          getCachedPlaylists(),
+          listOfflineTracks()
+        ]);
+      const nextDeviceId = storedDeviceId || id();
+      if (!storedDeviceId) await setSetting(SETTINGS.deviceId, nextDeviceId);
+      const nextBaseUrl = normalizeBaseUrl(storedBaseUrl || '');
+      setBaseUrl(nextBaseUrl);
+      setBaseUrlInput(nextBaseUrl);
+      setDeviceId(nextDeviceId);
+      setUser(parseUser(storedUser));
+      setSongs(cachedSongs);
+      setPlaylists(cachedPlaylists);
+      setOfflineTracks(cachedOffline);
+      setActiveTab(nextBaseUrl ? 'library' : 'server');
+    } catch (error) {
+      toast('error', err(error, 'Falha ao iniciar o app.'));
     } finally {
-      setIsSyncing(false);
+      setBooting(false);
     }
-  };
+  }
 
   useEffect(() => {
-    void (async () => {
-      try {
-        await initDatabase();
-        const localState = await hydrateLocalState();
-        if (localState.savedServerUrl) {
-          await syncServer(localState.savedServerUrl, localState.resolvedDeviceId, localState.resolvedDeviceName, false);
-        }
-      } catch (error: any) {
-        setStatusMessage(error?.message || 'Falha ao inicializar o MusFy Mobile.');
-      } finally {
-        setIsBooting(false);
-      }
-    })();
+    void bootstrap();
   }, []);
 
-  const persistServerUrl = async (value: string) => {
-    setServerUrlState(value);
-    await setSetting(SERVER_URL_KEY, value);
-  };
+  useEffect(() => {
+    if (!banner) return;
+    const timer = setTimeout(() => setBanner(null), 4500);
+    return () => clearTimeout(timer);
+  }, [banner]);
 
-  const refreshOfflineTracks = async () => {
-    setOfflineTracks(await listOfflineTracks());
-  };
+  useEffect(() => {
+    return () => {
+      void unload();
+    };
+  }, []);
 
-  const discoverServer = async () => {
-    setIsDiscovering(true);
-    setStatusMessage('Procurando o servidor MusFy nas URLs mais prováveis...');
-
+  async function syncHealth(targetBaseUrl = normalized, silent = true) {
+    if (!targetBaseUrl) return;
     try {
-      for (const candidate of getServerCandidates(serverUrl)) {
-        const connected = await syncServer(candidate, deviceId, deviceName);
-        if (connected) {
-          setStatusMessage(`Servidor MusFy encontrado automaticamente em ${candidate}.`);
+      const nextHealth = await fetchHealth(targetBaseUrl);
+      setHealth(nextHealth);
+      if (deviceId) {
+        await registerAndroidDevice(targetBaseUrl, deviceId, `MusFy Mobile ${Platform.OS}`, currentUserId);
+      }
+      if (!silent) {
+        toast(nextHealth.ready ? 'success' : 'info', nextHealth.ready ? 'Servidor pronto.' : 'Servidor respondeu.');
+      }
+    } catch (error) {
+      setHealth(null);
+      if (!silent) toast('error', err(error, 'Falha ao conectar com o servidor.'));
+    }
+  }
+
+  async function syncSongs(targetSection = section, silent = true) {
+    if (!normalized) return;
+    try {
+      const nextSongs = await fetchSongs(normalized, currentUserId, targetSection);
+      setSongs(nextSongs);
+      await cacheSongs(nextSongs);
+    } catch (error) {
+      if (!silent) toast('error', err(error, 'Falha ao sincronizar a biblioteca.'));
+    }
+  }
+
+  async function syncPlaylists(targetScope = playlistScope, silent = true) {
+    if (!normalized) return;
+    try {
+      const nextPlaylists = await fetchPlaylists(normalized, {
+        userId: currentUserId,
+        scope: targetScope,
+        excludeUserId: targetScope === 'discover' ? currentUserId : null
+      });
+      setPlaylists(nextPlaylists);
+      await cachePlaylists(nextPlaylists);
+    } catch (error) {
+      if (!silent) toast('error', err(error, 'Falha ao sincronizar playlists.'));
+    }
+  }
+
+  async function syncJobs(silent = true) {
+    if (!normalized) return;
+    try {
+      setJobs(await fetchDownloadJobs(normalized));
+    } catch (error) {
+      if (!silent) toast('error', err(error, 'Falha ao carregar a fila.'));
+    }
+  }
+
+  useEffect(() => {
+    if (booting || !normalized) return;
+    void syncHealth();
+  }, [booting, normalized, currentUserId, deviceId]);
+
+  useEffect(() => {
+    if (booting || !normalized) return;
+    void syncSongs();
+  }, [booting, normalized, section, currentUserId]);
+
+  useEffect(() => {
+    if (booting || !normalized) return;
+    void syncPlaylists();
+  }, [booting, normalized, playlistScope, currentUserId]);
+
+  useEffect(() => {
+    if (booting || !normalized) return;
+    void syncJobs();
+  }, [booting, normalized]);
+
+  useEffect(() => {
+    if (booting || !normalized || activeTab !== 'downloads') return;
+    const timer = setInterval(() => void syncJobs(), 15000);
+    return () => clearInterval(timer);
+  }, [booting, normalized, activeTab]);
+
+  async function refreshAll() {
+    if (!normalized) {
+      toast('info', 'Configure a URL do servidor.');
+      setActiveTab('server');
+      return;
+    }
+    setRefreshing(true);
+    await Promise.allSettled([syncHealth(normalized), syncSongs(), syncPlaylists(), syncJobs(), loadOffline()]);
+    setRefreshing(false);
+    toast('success', 'Sincronizacao concluida.');
+  }
+
+  async function saveServer() {
+    const next = normalizeBaseUrl(baseUrlInput);
+    if (!next) {
+      toast('error', 'Informe a URL do servidor.');
+      return;
+    }
+    await setSetting(SETTINGS.baseUrl, next);
+    setBaseUrl(next);
+    setBaseUrlInput(next);
+    setActiveTab('library');
+    await syncHealth(next, false);
+  }
+
+  async function submitAuth() {
+    if (!normalized) {
+      toast('error', 'Conecte um servidor antes de autenticar.');
+      return;
+    }
+    if (!authEmail.trim() || !authPassword.trim() || (authMode === 'register' && !authName.trim())) {
+      toast('error', 'Preencha os campos obrigatorios.');
+      return;
+    }
+    setAuthBusy(true);
+    try {
+      const nextUser =
+        authMode === 'login'
+          ? await loginUser(normalized, authEmail, authPassword)
+          : await registerUser(normalized, authName, authEmail, authPassword);
+      await persistUser(nextUser);
+      setAuthPassword('');
+      toast('success', authMode === 'login' ? 'Sessao iniciada.' : 'Conta criada.');
+      await Promise.allSettled([syncHealth(), syncSongs('library'), syncPlaylists('mine')]);
+    } catch (error) {
+      toast('error', err(error, 'Falha ao autenticar.'));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function logout() {
+    await persistUser(null);
+    setSection('library');
+    setPlaylistScope('mine');
+    toast('info', 'Sessao encerrada.');
+    if (normalized) await Promise.allSettled([syncSongs('library'), syncPlaylists('mine')]);
+  }
+
+  function onStatus(status: AVPlaybackStatus) {
+    if (!status.isLoaded) {
+      if (status.error) toast('error', `Player: ${status.error}`);
+      return;
+    }
+    setIsPlaying(status.isPlaying);
+    setPositionMs(status.positionMillis);
+    setDurationMs(status.durationMillis || 0);
+    if (status.didJustFinish) {
+      setIsPlaying(false);
+      setPositionMs(0);
+    }
+  }
+
+  async function unload() {
+    if (soundRef.current) {
+      try {
+        await soundRef.current.unloadAsync();
+      } finally {
+        soundRef.current = null;
+      }
+    }
+    setCurrentId(null);
+    setCurrentTitle('');
+    setCurrentArtist('');
+    setCurrentSource(null);
+    setIsPlaying(false);
+    setPositionMs(0);
+    setDurationMs(0);
+  }
+
+  async function playSong(song: Song) {
+    const local = offlineTracks.find((track) => track.songId === song.id) || null;
+    const uri = local?.localUri || (normalized ? buildAudioStreamUrl(normalized, song.id) : '');
+    const source: Source = local ? 'offline' : 'stream';
+    if (!uri) {
+      toast('error', 'Configure o servidor para tocar esta faixa.');
+      return;
+    }
+    setPlayerBusy(true);
+    try {
+      if (soundRef.current && currentId === song.id && currentSource === source) {
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isLoaded) {
+          if (status.isPlaying) {
+            await soundRef.current.pauseAsync();
+          } else {
+            await soundRef.current.playAsync();
+          }
           return;
         }
       }
-
-      setStatusMessage('Nenhum servidor MusFy respondeu automaticamente. Confira o IP do computador e tente de novo.');
+      await unload();
+      const { sound } = await Audio.Sound.createAsync(
+        { uri },
+        { shouldPlay: true, progressUpdateIntervalMillis: 500 },
+        onStatus
+      );
+      soundRef.current = sound;
+      setCurrentId(song.id);
+      setCurrentTitle(song.title);
+      setCurrentArtist(song.artist || '');
+      setCurrentSource(source);
+      setIsPlaying(true);
+    } catch (error) {
+      await unload();
+      toast('error', err(error, 'Falha ao iniciar a reproducao.'));
     } finally {
-      setIsDiscovering(false);
+      setPlayerBusy(false);
     }
-  };
+  }
 
-  const handleSongOffline = async (song: Song) => {
-    const baseUrl = serverUrl.trim().replace(/\/+$/, '');
-    if (!baseUrl) {
-      setStatusMessage('Defina a URL do servidor antes de baixar offline.');
+  async function playOffline(track: OfflineTrack) {
+    await playSong({ id: track.songId, title: track.title, artist: track.artist });
+  }
+
+  async function toggleFav(song: Song) {
+    if (!normalized || !user) {
+      toast('info', 'Entre com sua conta para usar favoritos.');
       return;
     }
-
-    setDownloadingId(song.id);
-    setStatusMessage(`Baixando "${song.title}" para o cache offline do Android...`);
-
+    setSongBusyId(song.id);
     try {
-      await downloadSongOffline(baseUrl, song);
-      await refreshOfflineTracks();
-      setStatusMessage(`"${song.title}" ficou salva offline no aparelho.`);
-      setActiveTab('offline');
-    } catch (error: any) {
-      setStatusMessage(error?.message || 'Falha ao baixar faixa offline.');
+      const next = await toggleFavorite(normalized, song.id, !song.favorite, user.id);
+      setSongs((current) => current.map((item) => (item.id === next.id ? { ...item, ...next } : item)));
+      setPlaylists((current) =>
+        current.map((playlist) => ({
+          ...playlist,
+          songs: playlist.songs?.map((item) => (item.id === next.id ? { ...item, ...next } : item))
+        }))
+      );
+    } catch (error) {
+      toast('error', err(error, 'Falha ao atualizar favorito.'));
     } finally {
-      setDownloadingId(null);
+      setSongBusyId(null);
     }
-  };
+  }
 
-  const handlePlaylistOffline = async (playlist: Playlist) => {
-    const baseUrl = serverUrl.trim().replace(/\/+$/, '');
-    if (!baseUrl) {
-      setStatusMessage('Defina a URL do servidor antes de baixar uma playlist.');
+  async function saveOffline(song: Song, playlistId?: string) {
+    if (!normalized) {
+      toast('error', 'Conecte o servidor para salvar offline.');
       return;
     }
-
-    setDownloadingId(playlist.id);
+    setOfflineBusyId(song.id);
     try {
-      await downloadPlaylistOffline(baseUrl, playlist, (done, total) => {
-        setStatusMessage(`Baixando playlist "${playlist.name}" (${done}/${total})...`);
+      await downloadSongOffline(normalized, song, playlistId);
+      await loadOffline();
+      toast('success', `"${song.title}" salvo no aparelho.`);
+    } catch (error) {
+      toast('error', err(error, 'Falha ao baixar a faixa.'));
+    } finally {
+      setOfflineBusyId(null);
+    }
+  }
+
+  async function savePlaylistOffline(playlist: Playlist) {
+    if (!normalized || !playlist.songs?.length) {
+      toast('info', 'Esta playlist nao possui faixas para baixar.');
+      return;
+    }
+    setOfflineBusyId(playlist.id);
+    setOfflineProgress(`Baixando 0/${playlist.songs.length}`);
+    try {
+      await downloadPlaylistOffline(normalized, playlist, (done, total) => setOfflineProgress(`Baixando ${done}/${total}`));
+      await loadOffline();
+      toast('success', `Playlist "${playlist.name}" salva offline.`);
+    } catch (error) {
+      toast('error', err(error, 'Falha ao baixar a playlist.'));
+    } finally {
+      setOfflineBusyId(null);
+      setOfflineProgress('');
+    }
+  }
+
+  function removeOfflineTrack(track: OfflineTrack) {
+    Alert.alert('Remover offline', `Excluir "${track.title}" do aparelho?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Remover',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            try {
+              if (currentId === track.songId && currentSource === 'offline') await unload();
+              await removeSongOffline(track);
+              await loadOffline();
+              toast('success', 'Arquivo removido.');
+            } catch (error) {
+              toast('error', err(error, 'Falha ao remover o arquivo.'));
+            }
+          })();
+        }
+      }
+    ]);
+  }
+
+  async function createOrRenamePlaylist(mode: 'create' | 'rename') {
+    if (!normalized) {
+      toast('error', 'Conecte um servidor antes de editar playlists.');
+      return;
+    }
+    if (!playlistName.trim()) {
+      toast('error', 'Informe um nome de playlist.');
+      return;
+    }
+    setPlaylistBusyId(mode);
+    try {
+      if (mode === 'create') {
+        await createPlaylist(normalized, playlistName.trim(), currentUserId);
+      } else if (selectedPlaylistId) {
+        await renamePlaylist(normalized, selectedPlaylistId, playlistName.trim());
+      }
+      await syncPlaylists(playlistScope, false);
+      if (mode === 'create') setPlaylistName('');
+      toast('success', mode === 'create' ? 'Playlist criada.' : 'Playlist renomeada.');
+    } catch (error) {
+      toast('error', err(error, 'Falha ao editar playlist.'));
+    } finally {
+      setPlaylistBusyId(null);
+    }
+  }
+
+  function removePlaylist() {
+    if (!normalized || !selectedPlaylist) {
+      toast('info', 'Selecione uma playlist.');
+      return;
+    }
+    Alert.alert('Excluir playlist', `Remover "${selectedPlaylist.name}" do servidor?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setPlaylistBusyId(selectedPlaylist.id);
+            try {
+              await deletePlaylist(normalized, selectedPlaylist.id);
+              await syncPlaylists(playlistScope, false);
+              setSelectedPlaylistId(null);
+              setPlaylistName('');
+              toast('success', 'Playlist removida.');
+            } catch (error) {
+              toast('error', err(error, 'Falha ao remover playlist.'));
+            } finally {
+              setPlaylistBusyId(null);
+            }
+          })();
+        }
+      }
+    ]);
+  }
+
+  async function addToSelectedPlaylist(song: Song) {
+    if (!normalized || !selectedPlaylistId) {
+      toast('info', 'Selecione uma playlist para receber a faixa.');
+      setActiveTab('playlists');
+      return;
+    }
+    setPlaylistBusyId(selectedPlaylistId);
+    try {
+      await addSongToPlaylist(normalized, selectedPlaylistId, song.id);
+      await syncPlaylists(playlistScope, false);
+      toast('success', `"${song.title}" adicionada na playlist ativa.`);
+    } catch (error) {
+      toast('error', err(error, 'Falha ao adicionar faixa na playlist.'));
+    } finally {
+      setPlaylistBusyId(null);
+    }
+  }
+
+  async function removeFromPlaylist(playlistId: string, songId: string) {
+    if (!normalized) return;
+    setPlaylistBusyId(playlistId);
+    try {
+      await removeSongFromPlaylist(normalized, playlistId, songId);
+      await syncPlaylists(playlistScope, false);
+      toast('success', 'Faixa removida da playlist.');
+    } catch (error) {
+      toast('error', err(error, 'Falha ao remover faixa da playlist.'));
+    } finally {
+      setPlaylistBusyId(null);
+    }
+  }
+
+  async function queueDownload() {
+    if (!normalized) {
+      toast('error', 'Conecte o servidor antes de enviar downloads.');
+      return;
+    }
+    if (!downloadUrl.trim()) {
+      toast('error', 'Informe uma URL do YouTube.');
+      return;
+    }
+    setJobsBusy(true);
+    try {
+      await enqueueYoutubeDownload(normalized, {
+        url: downloadUrl.trim(),
+        userId: currentUserId,
+        mode: downloadMode,
+        includeVideo,
+        title: downloadTitle.trim() || null,
+        artist: downloadArtist.trim() || null
       });
-      await refreshOfflineTracks();
-      setStatusMessage(`Playlist "${playlist.name}" salva offline.`);
-      setActiveTab('offline');
-    } catch (error: any) {
-      setStatusMessage(error?.message || 'Falha ao baixar playlist offline.');
+      setDownloadUrl('');
+      setDownloadTitle('');
+      setDownloadArtist('');
+      await syncJobs(false);
+      setActiveTab('downloads');
+      toast('success', 'Download enviado para a fila.');
+    } catch (error) {
+      toast('error', err(error, 'Falha ao enfileirar download.'));
     } finally {
-      setDownloadingId(null);
+      setJobsBusy(false);
     }
-  };
+  }
 
-  const renderServerTab = () => (
-    <View style={styles.panel}>
-      <View style={styles.panelHeader}>
-        <View>
-          <Text style={styles.panelEyebrow}>Servidor local</Text>
-          <Text style={styles.panelTitle}>Host do MusFy</Text>
-        </View>
-        <View style={styles.badgeMuted}>
-          <Text style={styles.badgeMutedLabel}>{health?.ok ? 'Online' : 'Offline'}</Text>
-        </View>
-      </View>
+  async function actOnJob(job: DownloadJob) {
+    if (!normalized) return;
+    setJobsBusy(true);
+    try {
+      if (job.status === 'running' || job.status === 'queued') {
+        await pauseDownloadJob(normalized, job.id);
+      } else {
+        await resumeDownloadJob(normalized, job.id);
+      }
+      await syncJobs(false);
+    } catch (error) {
+      toast('error', err(error, 'Falha ao atualizar a fila.'));
+    } finally {
+      setJobsBusy(false);
+    }
+  }
 
-      <Text style={styles.panelText}>Use o mesmo host do desktop para sincronizar biblioteca, playlists e cache offline.</Text>
-
-      <TextInput
-        value={serverUrl}
-        onChangeText={(value) => void persistServerUrl(value)}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="http://192.168.0.10:3001"
-        placeholderTextColor="#6b7280"
-        style={styles.searchInput}
-      />
-
-      <View style={styles.actionColumn}>
-        <Pressable onPress={() => void syncServer()} style={styles.primaryAction}>
-          <Text style={styles.primaryActionLabel}>{isSyncing ? 'Sincronizando...' : 'Sincronizar agora'}</Text>
-        </Pressable>
-        <Pressable onPress={() => void discoverServer()} style={styles.secondaryAction}>
-          <Text style={styles.secondaryActionLabel}>{isDiscovering ? 'Buscando...' : 'Localizar servidor'}</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.metricsGrid}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Host</Text>
-          <Text style={styles.metricValue}>{health?.service || 'MusFy local'}</Text>
-          <Text style={styles.metricText}>{health?.mode ? `modo ${health.mode}` : serverUrl}</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Dispositivo</Text>
-          <Text style={styles.metricValue}>{deviceName}</Text>
-          <Text style={styles.metricText}>{deviceId || 'Gerando identificador local'}</Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Armazenamento</Text>
-          <Text style={styles.metricValue}>{getStorageLabel(serviceStorage)}</Text>
-          <Text style={styles.metricText}>{serviceStorage.sqlite?.path || 'Sem caminho reportado ainda'}</Text>
-        </View>
-      </View>
-
-      <View style={styles.noticeCard}>
-        <Text style={styles.noticeText}>{statusMessage}</Text>
-      </View>
-    </View>
-  );
-
-  const renderLibraryTab = () => (
-    <View style={styles.panel}>
-      <View style={styles.panelHeader}>
-        <View>
-          <Text style={styles.panelEyebrow}>Sua biblioteca</Text>
-          <Text style={styles.panelTitle}>Faixas do host</Text>
-        </View>
-        <View style={styles.badgeMuted}>
-          <Text style={styles.badgeMutedLabel}>{songs.length} faixas</Text>
-        </View>
-      </View>
-
-      {songs.length ? (
-        songs.map((song) => (
-          <View key={song.id} style={styles.songCard}>
-            <View style={styles.songArtworkShell}>
-              {song.thumbnail ? <Image source={{ uri: song.thumbnail }} style={styles.songArtwork} /> : <View style={styles.songArtworkFallback} />}
-            </View>
-            <View style={styles.songMeta}>
-              <Text numberOfLines={1} style={styles.songTitle}>{song.title}</Text>
-              <Text numberOfLines={2} style={styles.songSubtitle}>{getSongSubtitle(song)}</Text>
-            </View>
-            <Pressable onPress={() => void handleSongOffline(song)} style={styles.iconAction}>
-              <Text style={styles.iconActionLabel}>{downloadingId === song.id ? '...' : 'Salvar'}</Text>
-            </Pressable>
+  function renderServer() {
+    return (
+      <>
+        <Card title="Conexao LAN" subtitle="Aponte o app para o backend local do MusFy.">
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            placeholder="http://192.168.0.10:3001"
+            placeholderTextColor="#6f7285"
+            style={styles.input}
+            value={baseUrlInput}
+            onChangeText={setBaseUrlInput}
+          />
+          <View style={styles.row}>
+            <Btn label="Salvar e testar" onPress={() => void saveServer()} />
+            <Btn label="Sincronizar tudo" kind="secondary" onPress={() => void refreshAll()} />
           </View>
-        ))
-      ) : (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Nenhuma faixa sincronizada</Text>
-          <Text style={styles.emptyText}>Use a aba Host para conectar o mobile no mesmo servidor do desktop.</Text>
-        </View>
-      )}
-    </View>
-  );
+          <Text style={styles.meta}>Status: {health?.status || 'offline'} | ready: {health?.ready ? 'sim' : 'nao'}</Text>
+          <Text style={styles.meta}>Host: {health?.host || '-'} | porta: {health?.port || '-'}</Text>
+          <Text style={styles.meta}>Device ID: {deviceId || '-'}</Text>
+        </Card>
 
-  const renderPlaylistTab = () => (
-    <View style={styles.panel}>
-      <View style={styles.panelHeader}>
-        <View>
-          <Text style={styles.panelEyebrow}>Sua home</Text>
-          <Text style={styles.panelTitle}>Playlists</Text>
-        </View>
-        <View style={styles.badgeMuted}>
-          <Text style={styles.badgeMutedLabel}>{playlists.length} listas</Text>
-        </View>
-      </View>
+        <Card title="Sessao" subtitle="Login opcional para favoritos, playlists e biblioteca pessoal.">
+          {user ? (
+            <>
+              <Text style={styles.title}>{user.nome}</Text>
+              <Text style={styles.meta}>{user.email || 'Sem email publico'}</Text>
+              <Btn label="Sair" kind="ghost" onPress={() => void logout()} />
+            </>
+          ) : (
+            <>
+              <Chip items={['login', 'register']} selected={authMode} labels={{ login: 'Entrar', register: 'Criar conta' }} onPick={setAuthMode} />
+              {authMode === 'register' ? (
+                <TextInput
+                  placeholder="Nome"
+                  placeholderTextColor="#6f7285"
+                  style={styles.input}
+                  value={authName}
+                  onChangeText={setAuthName}
+                />
+              ) : null}
+              <TextInput
+                autoCapitalize="none"
+                keyboardType="email-address"
+                placeholder="Email"
+                placeholderTextColor="#6f7285"
+                style={styles.input}
+                value={authEmail}
+                onChangeText={setAuthEmail}
+              />
+              <TextInput
+                secureTextEntry
+                placeholder="Senha"
+                placeholderTextColor="#6f7285"
+                style={styles.input}
+                value={authPassword}
+                onChangeText={setAuthPassword}
+              />
+              <Btn label={authMode === 'login' ? 'Entrar' : 'Criar conta'} onPress={() => void submitAuth()} busy={authBusy} disabled={authBusy} />
+            </>
+          )}
+        </Card>
+      </>
+    );
+  }
 
-      {playlists.length ? (
-        playlists.map((playlist) => {
-          const cover = getPlaylistCover(playlist);
-          return (
-            <View key={playlist.id} style={styles.playlistCard}>
-              <View style={styles.playlistCoverShell}>
-                {cover ? <Image source={{ uri: cover }} style={styles.playlistCover} /> : <View style={styles.playlistCoverFallback} />}
-                <View style={styles.playlistOverlay} />
-                <View style={styles.playlistCopy}>
-                  <Text style={styles.playlistEyebrow}>Sua playlist</Text>
-                  <Text style={styles.playlistName}>{playlist.name}</Text>
-                  <Text style={styles.playlistMeta}>{playlist.songs?.length || 0} faixas</Text>
+  function renderLibrary() {
+    return (
+      <>
+        <Card title="Biblioteca" subtitle="Streaming pela LAN com fallback para arquivos offline.">
+          <Chip
+            items={SONG_SECTIONS}
+            selected={section}
+            labels={SONG_LABEL}
+            onPick={(next) => {
+              if (next === 'favorites' && !user) {
+                toast('info', 'Entre com sua conta para ver favoritos.');
+                return;
+              }
+              setSection(next);
+            }}
+          />
+          <Text style={styles.meta}>
+            {songs.length} faixas | playlist ativa: {selectedPlaylist?.name || 'nenhuma'}
+          </Text>
+        </Card>
+
+        {songs.length ? (
+          songs.map((song) => {
+            const local = offlineTracks.find((track) => track.songId === song.id);
+            return (
+              <View key={song.id} style={[styles.block, currentId === song.id && styles.blockActive]}>
+                <Text style={styles.title}>{song.title}</Text>
+                <Text style={styles.meta}>{song.artist || song.uploadedByUserName || 'Artista desconhecido'}</Text>
+                <Text style={styles.meta}>{local ? 'Disponivel offline' : 'Streaming LAN'} {song.favorite ? '| favorita' : ''}</Text>
+                <View style={styles.row}>
+                  <Btn label={currentId === song.id && isPlaying ? 'Pausar' : 'Tocar'} onPress={() => void playSong(song)} disabled={playerBusy} />
+                  <Btn label={song.favorite ? 'Desfavoritar' : 'Favoritar'} kind="secondary" onPress={() => void toggleFav(song)} disabled={songBusyId === song.id} />
+                </View>
+                <View style={styles.row}>
+                  <Btn label={local ? 'Ja salvo' : 'Salvar offline'} kind="ghost" onPress={() => void saveOffline(song)} disabled={Boolean(local) || offlineBusyId === song.id} />
+                  <Btn label="Add na ativa" kind="ghost" onPress={() => void addToSelectedPlaylist(song)} disabled={!selectedPlaylistId || playlistBusyId === selectedPlaylistId} />
                 </View>
               </View>
-              <Pressable onPress={() => void handlePlaylistOffline(playlist)} style={styles.secondaryAction}>
-                <Text style={styles.secondaryActionLabel}>{downloadingId === playlist.id ? 'Baixando...' : 'Baixar playlist'}</Text>
-              </Pressable>
-            </View>
-          );
-        })
-      ) : (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Nenhuma playlist disponível</Text>
-          <Text style={styles.emptyText}>As playlists do desktop aparecem aqui depois da sincronização com o host.</Text>
-        </View>
-      )}
-    </View>
-  );
-
-  const renderOfflineTab = () => (
-    <View style={styles.panel}>
-      <View style={styles.panelHeader}>
-        <View>
-          <Text style={styles.panelEyebrow}>Sessão offline</Text>
-          <Text style={styles.panelTitle}>Guardado no aparelho</Text>
-        </View>
-        <View style={styles.badgePositive}>
-          <Text style={styles.badgePositiveLabel}>{offlineTracks.length} salvas</Text>
-        </View>
-      </View>
-
-      {offlineTracks.length ? (
-        offlineTracks.map((track) => (
-          <View key={track.songId} style={styles.songCard}>
-            <View style={styles.songArtworkFallback} />
-            <View style={styles.songMeta}>
-              <Text numberOfLines={1} style={styles.songTitle}>{track.title}</Text>
-              <Text numberOfLines={2} style={styles.songSubtitle}>{track.artist || 'Sem artista'} · {formatBytes(track.sizeBytes)}</Text>
-              <Text numberOfLines={1} style={styles.songPath}>{track.localUri}</Text>
-            </View>
+            );
+          })
+        ) : (
+          <View style={styles.block}>
+            <Text style={styles.title}>Biblioteca vazia</Text>
+            <Text style={styles.meta}>Sincronize o servidor para carregar as faixas.</Text>
           </View>
-        ))
-      ) : (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Nada offline ainda</Text>
-          <Text style={styles.emptyText}>Baixe faixas ou playlists para repetir o comportamento do desktop mesmo sem conexão.</Text>
-        </View>
-      )}
-    </View>
-  );
+        )}
+      </>
+    );
+  }
 
-  const renderActiveTab = () => {
-    if (activeTab === 'library') return renderLibraryTab();
-    if (activeTab === 'playlists') return renderPlaylistTab();
-    if (activeTab === 'offline') return renderOfflineTab();
-    return renderServerTab();
-  };
-
-  if (isBooting) {
+  function renderPlaylists() {
     return (
-      <SafeAreaView style={styles.bootScreen}>
+      <>
+        <Card title="Playlists" subtitle="Selecione uma playlist ativa para receber faixas da biblioteca.">
+          <Chip items={PLAYLIST_SCOPES} selected={playlistScope} labels={PLAYLIST_LABEL} onPick={setPlaylistScope} />
+          <TextInput
+            placeholder={selectedPlaylist ? 'Renomear playlist ativa' : 'Nova playlist'}
+            placeholderTextColor="#6f7285"
+            style={styles.input}
+            value={playlistName}
+            onChangeText={setPlaylistName}
+          />
+          <View style={styles.row}>
+            <Btn label="Criar" onPress={() => void createOrRenamePlaylist('create')} busy={playlistBusyId === 'create'} />
+            <Btn label="Renomear" kind="secondary" onPress={() => void createOrRenamePlaylist('rename')} disabled={!selectedPlaylistId} />
+            <Btn label="Excluir" kind="ghost" onPress={removePlaylist} disabled={!selectedPlaylistId} />
+          </View>
+        </Card>
+
+        {playlists.length ? (
+          playlists.map((playlist) => (
+            <View key={playlist.id} style={[styles.block, selectedPlaylistId === playlist.id && styles.blockActive]}>
+              <Text style={styles.title}>{playlist.name}</Text>
+              <Text style={styles.meta}>
+                {playlist.ownerUserName || 'Sem dono visivel'} | {playlist.songs?.length || 0} faixas
+              </Text>
+              <View style={styles.row}>
+                <Btn
+                  label={selectedPlaylistId === playlist.id ? 'Ativa' : 'Selecionar'}
+                  kind="secondary"
+                  onPress={() => {
+                    setSelectedPlaylistId(playlist.id);
+                    setPlaylistName(playlist.name);
+                  }}
+                />
+                <Btn label="Salvar offline" kind="ghost" onPress={() => void savePlaylistOffline(playlist)} disabled={offlineBusyId === playlist.id} />
+              </View>
+              {selectedPlaylistId === playlist.id && playlist.songs?.length ? (
+                <View style={styles.subList}>
+                  {playlist.songs.map((song) => (
+                    <View key={song.id} style={styles.subItem}>
+                      <Text style={styles.subTitle}>{song.title}</Text>
+                      <Text style={styles.meta}>{song.artist || 'Artista desconhecido'}</Text>
+                      <View style={styles.row}>
+                        <Btn label="Tocar" kind="secondary" onPress={() => void playSong(song)} />
+                        <Btn label="Salvar" kind="ghost" onPress={() => void saveOffline(song, playlist.id)} />
+                        <Btn label="Remover" kind="ghost" onPress={() => void removeFromPlaylist(playlist.id, song.id)} disabled={playlistBusyId === playlist.id} />
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ))
+        ) : (
+          <View style={styles.block}>
+            <Text style={styles.title}>Nenhuma playlist</Text>
+            <Text style={styles.meta}>Crie uma lista ou mude o escopo para descobrir playlists.</Text>
+          </View>
+        )}
+
+        {offlineProgress ? <Text style={styles.progress}>{offlineProgress}</Text> : null}
+      </>
+    );
+  }
+
+  function renderOffline() {
+    return (
+      <>
+        <Card title="Offline" subtitle="Faixas salvas no armazenamento privado do app.">
+          <Text style={styles.meta}>{offlineTracks.length} arquivos | {bytes(offlineBytes)}</Text>
+        </Card>
+        {offlineTracks.length ? (
+          offlineTracks.map((track) => (
+            <View key={track.songId} style={[styles.block, currentId === track.songId && styles.blockActive]}>
+              <Text style={styles.title}>{track.title}</Text>
+              <Text style={styles.meta}>{track.artist || 'Arquivo local'}</Text>
+              <Text style={styles.meta}>{bytes(Number(track.sizeBytes || 0))}</Text>
+              <View style={styles.row}>
+                <Btn label={currentId === track.songId && isPlaying ? 'Pausar' : 'Tocar'} onPress={() => void playOffline(track)} />
+                <Btn label="Remover" kind="ghost" onPress={() => removeOfflineTrack(track)} />
+              </View>
+            </View>
+          ))
+        ) : (
+          <View style={styles.block}>
+            <Text style={styles.title}>Nada salvo</Text>
+            <Text style={styles.meta}>Baixe faixas ou playlists para habilitar o modo offline.</Text>
+          </View>
+        )}
+      </>
+    );
+  }
+
+  function renderJobs() {
+    return (
+      <>
+        <Card title="Fila de downloads" subtitle="Envie links do YouTube para o backend processar.">
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="https://www.youtube.com/watch?v=..."
+            placeholderTextColor="#6f7285"
+            style={styles.input}
+            value={downloadUrl}
+            onChangeText={setDownloadUrl}
+          />
+          <TextInput placeholder="Titulo opcional" placeholderTextColor="#6f7285" style={styles.input} value={downloadTitle} onChangeText={setDownloadTitle} />
+          <TextInput placeholder="Artista opcional" placeholderTextColor="#6f7285" style={styles.input} value={downloadArtist} onChangeText={setDownloadArtist} />
+          <Chip items={DOWNLOAD_MODES} selected={downloadMode} labels={DOWNLOAD_LABEL} onPick={setDownloadMode} />
+          <Pressable onPress={() => setIncludeVideo((value) => !value)} style={[styles.toggle, includeVideo && styles.toggleActive]}>
+            <Text style={styles.meta}>{includeVideo ? 'Video junto: sim' : 'Video junto: nao'}</Text>
+          </Pressable>
+          <View style={styles.row}>
+            <Btn label="Adicionar na fila" onPress={() => void queueDownload()} busy={jobsBusy} disabled={jobsBusy} />
+            <Btn label="Atualizar" kind="secondary" onPress={() => void syncJobs(false)} />
+          </View>
+        </Card>
+
+        {jobs.length ? (
+          jobs.map((job) => (
+            <View key={job.id} style={styles.block}>
+              <Text style={styles.title}>{job.title || job.url || 'Download sem titulo'}</Text>
+              <Text style={styles.meta}>{job.artist || job.mode || 'Fila MusFy'}</Text>
+              <Text style={styles.meta}>{job.status || 'desconhecido'} | {job.stage || 'sem etapa'}</Text>
+              <Text style={styles.meta}>{job.message || 'Sem mensagem adicional'}</Text>
+              <View style={styles.bar}>
+                <View style={[styles.barFill, { width: `${Math.max(0, Math.min(100, Math.round(Number(job.progress || 0))))}%` }]} />
+              </View>
+              <Btn label={job.status === 'running' || job.status === 'queued' ? 'Pausar' : 'Retomar'} onPress={() => void actOnJob(job)} kind="secondary" disabled={jobsBusy} />
+            </View>
+          ))
+        ) : (
+          <View style={styles.block}>
+            <Text style={styles.title}>Fila vazia</Text>
+            <Text style={styles.meta}>Cole um link acima para iniciar um novo download.</Text>
+          </View>
+        )}
+      </>
+    );
+  }
+
+  if (booting) {
+    return (
+      <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
-        <View style={styles.bootPanel}>
-          <Text style={styles.bootBrand}>MUSFY</Text>
-          <Text style={styles.bootText}>Abrindo sua sessão móvel com a mesma base do desktop.</Text>
-          <ActivityIndicator color={BRAND} size="large" />
+        <View style={styles.boot}>
+          <ActivityIndicator color="#20e36f" size="large" />
+          <Text style={styles.title}>MUSFY</Text>
+          <Text style={styles.meta}>Preparando cache local e player.</Text>
         </View>
       </SafeAreaView>
     );
@@ -476,555 +960,230 @@ export default function App() {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.headerShell}>
-          <View style={styles.brandColumn}>
-            <Text style={styles.brand}>MUSFY</Text>
-            <Text style={styles.brandCaption}>Sua sessão, sua biblioteca, seu player.</Text>
-          </View>
-          <View style={styles.actionPills}>
-            <View style={styles.topPill}><Text style={styles.topPillLabel}>Host</Text></View>
-            <View style={styles.topPill}><Text style={styles.topPillLabel}>Android</Text></View>
-          </View>
-        </View>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refreshAll()} tintColor="#20e36f" />}
+          showsVerticalScrollIndicator={false}
+        >
+          <LinearGradient colors={['#1f7a43', '#10141d', '#07080c']} style={styles.hero}>
+            <Text style={styles.eyebrow}>Mobile LAN player</Text>
+            <Text style={styles.heroTitle}>MusFy no Android, com cache offline e fila local.</Text>
+            <Text style={styles.heroBody}>Biblioteca, playlists, downloads e reproducao no mesmo app.</Text>
+          </LinearGradient>
 
-        <View style={styles.searchShell}>
-          <TextInput
-            value={serverUrl}
-            onChangeText={(value) => void persistServerUrl(value)}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="Busque pelo host do MusFy ou edite a URL manualmente"
-            placeholderTextColor="#6b7280"
-            style={styles.headerSearch}
-          />
-        </View>
+          {banner ? <View style={[styles.notice, banner.tone === 'error' && styles.noticeError, banner.tone === 'success' && styles.noticeSuccess]}><Text style={styles.noticeText}>{banner.text}</Text></View> : null}
 
-        <View style={styles.heroCard}>
-          <Text style={styles.heroEyebrow}>MUSFY MOBILE</Text>
-          <Text style={styles.heroTitle}>A mesma estética do desktop, adaptada para a mão.</Text>
-          <Text style={styles.heroText}>Paleta escura, verde de marca, superfícies em vidro fosco e cartões largos para biblioteca, playlists e sessão offline.</Text>
-          <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>{summary.songs}</Text>
-              <Text style={styles.summaryLabel}>Faixas</Text>
+          <Card title="Player" subtitle="Streaming do servidor ou reproducao direta dos arquivos baixados.">
+            <Text style={styles.title}>{currentTitle || 'Nenhuma faixa carregada'}</Text>
+            <Text style={styles.meta}>{currentArtist || 'Pronto para tocar'} {currentSource ? `| ${currentSource}` : ''}</Text>
+            <Text style={styles.meta}>{mmss(positionMs)} / {mmss(durationMs)}</Text>
+            <View style={styles.row}>
+              <Btn
+                label={isPlaying ? 'Pausar' : 'Tocar'}
+                onPress={() => {
+                  if (!soundRef.current || !currentId || !currentSource) return;
+                  if (currentSource === 'offline') {
+                    const local = offlineTracks.find((track) => track.songId === currentId);
+                    if (local) void playOffline(local);
+                  } else {
+                    void playSong({ id: currentId, title: currentTitle, artist: currentArtist });
+                  }
+                }}
+                disabled={!currentId || playerBusy}
+              />
+              <Btn label="Parar" kind="ghost" onPress={() => void unload()} disabled={!currentId} />
             </View>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>{summary.playlists}</Text>
-              <Text style={styles.summaryLabel}>Playlists</Text>
-            </View>
-            <View style={styles.summaryCard}>
-              <Text style={styles.summaryValue}>{summary.offline}</Text>
-              <Text style={styles.summaryLabel}>Offline</Text>
-            </View>
-          </View>
-        </View>
+          </Card>
 
-        <View style={styles.sidebarCard}>
-          <Text style={styles.sidebarTitle}>Navegação</Text>
-          <View style={styles.tabRow}>
-            {(['server', 'library', 'playlists', 'offline'] as TabKey[]).map((tab) => (
+          <View style={styles.tabs}>
+            {TABS.map((tab) => (
               <Pressable key={tab} onPress={() => setActiveTab(tab)} style={[styles.tab, activeTab === tab && styles.tabActive]}>
-                <Text style={[styles.tabLabel, activeTab === tab && styles.tabLabelActive]}>{tab === 'server' ? 'Host' : tab === 'library' ? 'Biblioteca' : tab === 'playlists' ? 'Playlists' : 'Offline'}</Text>
+                <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>{TAB_LABEL[tab]}</Text>
               </Pressable>
             ))}
           </View>
-        </View>
 
-        {renderActiveTab()}
-      </ScrollView>
-
-      <View style={styles.playerDock}>
-        <View style={styles.playerThumb} />
-        <View style={styles.playerInfo}>
-          <Text style={styles.playerTitle}>{health?.ok ? 'Servidor pronto para tocar' : 'Conecte o host do MusFy'}</Text>
-          <Text numberOfLines={1} style={styles.playerSubtitle}>{statusMessage}</Text>
-        </View>
-        <View style={styles.playerBadge}>
-          <Text style={styles.playerBadgeLabel}>{offlineTracks.length} offline</Text>
-        </View>
-      </View>
+          {activeTab === 'server' ? renderServer() : null}
+          {activeTab === 'library' ? renderLibrary() : null}
+          {activeTab === 'playlists' ? renderPlaylists() : null}
+          {activeTab === 'offline' ? renderOffline() : null}
+          {activeTab === 'downloads' ? renderJobs() : null}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
+function Card(props: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.card}>
+      <Text style={styles.cardTitle}>{props.title}</Text>
+      {props.subtitle ? <Text style={styles.cardSubtitle}>{props.subtitle}</Text> : null}
+      <View style={styles.cardBody}>{props.children}</View>
+    </View>
+  );
+}
+
+function Btn(props: {
+  label: string;
+  onPress: () => void;
+  kind?: 'primary' | 'secondary' | 'ghost';
+  disabled?: boolean;
+  busy?: boolean;
+}) {
+  const kind = props.kind || 'primary';
+  return (
+    <Pressable
+      onPress={props.onPress}
+      disabled={props.disabled}
+      style={[
+        styles.btn,
+        kind === 'secondary' && styles.btnSecondary,
+        kind === 'ghost' && styles.btnGhost,
+        props.disabled && styles.btnDisabled
+      ]}
+    >
+      {props.busy ? <ActivityIndicator color={kind === 'primary' ? '#081008' : '#eef2ff'} /> : null}
+      <Text
+        style={[
+          styles.btnText,
+          kind !== 'primary' && styles.btnTextAlt
+        ]}
+      >
+        {props.label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function Chip<T extends string>(props: {
+  items: T[];
+  selected: T;
+  labels: Record<T, string>;
+  onPick: (value: T) => void;
+}) {
+  return (
+    <View style={styles.chips}>
+      {props.items.map((item) => (
+        <Pressable
+          key={item}
+          onPress={() => props.onPick(item)}
+          style={[styles.chip, props.selected === item && styles.chipActive]}
+        >
+          <Text style={[styles.chipText, props.selected === item && styles.chipTextActive]}>
+            {props.labels[item]}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#050505'
-  },
-  content: {
-    padding: 18,
-    paddingBottom: 126,
-    gap: 16
-  },
-  bootScreen: {
-    flex: 1,
-    backgroundColor: '#050505',
-    justifyContent: 'center',
-    padding: 24
-  },
-  bootPanel: {
-    borderRadius: 34,
+  container: { flex: 1, backgroundColor: '#05070d' },
+  flex: { flex: 1 },
+  scroll: { padding: 16, paddingBottom: 40, gap: 16 },
+  hero: { borderRadius: 28, padding: 24, gap: 8 },
+  eyebrow: { color: '#d4f8df', fontSize: 12, letterSpacing: 2, textTransform: 'uppercase' },
+  heroTitle: { color: '#f5f7fb', fontSize: 29, fontWeight: '900', lineHeight: 33 },
+  heroBody: { color: '#c6cad7', fontSize: 15, lineHeight: 21 },
+  notice: { borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#1c2432' },
+  noticeError: { backgroundColor: '#3b1820' },
+  noticeSuccess: { backgroundColor: '#143222' },
+  noticeText: { color: '#eef2ff', fontSize: 14, lineHeight: 20 },
+  card: {
+    backgroundColor: '#10141d',
+    borderRadius: 22,
+    padding: 16,
+    gap: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(11,11,11,0.96)',
-    padding: 28,
-    gap: 18
+    borderColor: '#1a2233'
   },
-  bootBrand: {
-    color: BRAND,
-    fontSize: 36,
-    fontWeight: '900',
-    letterSpacing: -1
+  cardTitle: { color: '#f5f7fb', fontSize: 19, fontWeight: '800' },
+  cardSubtitle: { color: '#96a0b8', fontSize: 13, lineHeight: 19 },
+  cardBody: { gap: 10 },
+  input: {
+    minHeight: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#253049',
+    backgroundColor: '#080b12',
+    color: '#f6f7fb',
+    paddingHorizontal: 16,
+    fontSize: 15
   },
-  bootText: {
-    color: '#a1a1aa',
-    fontSize: 15,
-    lineHeight: 24
-  },
-  headerShell: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12
-  },
-  brandColumn: {
-    flex: 1,
-    gap: 6
-  },
-  brand: {
-    color: BRAND,
-    fontSize: 30,
-    fontWeight: '900',
-    letterSpacing: -1
-  },
-  brandCaption: {
-    color: '#71717a',
-    fontSize: 13,
-    lineHeight: 20
-  },
-  actionPills: {
-    flexDirection: 'row',
-    gap: 8
-  },
-  topPill: {
-    borderRadius: 999,
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tab: {
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.04)'
-  },
-  topPillLabel: {
-    color: '#e4e4e7',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  searchShell: {
     borderRadius: 999,
+    backgroundColor: '#0d1119',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#111111',
-    paddingHorizontal: 18
+    borderColor: '#1f2737'
   },
-  headerSearch: {
-    height: 56,
-    color: '#fafafa',
-    fontSize: 15
-  },
-  heroCard: {
-    borderRadius: 32,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#0b0b0b',
-    padding: 22,
-    gap: 12
-  },
-  heroEyebrow: {
-    color: '#86efac',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 3
-  },
-  heroTitle: {
-    color: '#fafafa',
-    fontSize: 30,
-    fontWeight: '900',
-    letterSpacing: -1
-  },
-  heroText: {
-    color: '#a1a1aa',
-    fontSize: 14,
-    lineHeight: 22
-  },
-  summaryRow: {
-    flexDirection: 'row',
+  tabActive: { backgroundColor: '#f4ede1', borderColor: '#f4ede1' },
+  tabText: { color: '#cad0dd', fontWeight: '700' },
+  tabTextActive: { color: '#111318' },
+  block: {
+    backgroundColor: '#0f131c',
+    borderRadius: 22,
+    padding: 16,
     gap: 10,
-    marginTop: 4
-  },
-  summaryCard: {
-    flex: 1,
-    borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    padding: 14
+    borderColor: '#1a2233'
   },
-  summaryValue: {
-    color: '#ffffff',
-    fontSize: 20,
-    fontWeight: '900'
-  },
-  summaryLabel: {
-    color: '#71717a',
-    fontSize: 12,
-    marginTop: 4
-  },
-  sidebarCard: {
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#101010',
-    padding: 16,
-    gap: 14
-  },
-  sidebarTitle: {
-    color: '#fafafa',
-    fontSize: 18,
-    fontWeight: '800'
-  },
-  tabRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10
-  },
-  tab: {
-    minWidth: '47%',
+  blockActive: { borderColor: '#b7ff47' },
+  subList: { gap: 10 },
+  subItem: {
+    backgroundColor: '#080b12',
     borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.03)'
-  },
-  tabActive: {
-    backgroundColor: '#ffffff',
-    borderColor: '#ffffff'
-  },
-  tabLabel: {
-    color: '#d4d4d8',
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  tabLabelActive: {
-    color: '#09090b'
-  },
-  panel: {
-    borderRadius: 30,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#0b0b0b',
-    padding: 18,
-    gap: 16
-  },
-  panelHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 12
-  },
-  panelEyebrow: {
-    color: '#71717a',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 2.4,
-    textTransform: 'uppercase'
-  },
-  panelTitle: {
-    color: '#fafafa',
-    fontSize: 28,
-    fontWeight: '900',
-    letterSpacing: -1,
-    marginTop: 6
-  },
-  panelText: {
-    color: '#a1a1aa',
-    fontSize: 14,
-    lineHeight: 22
-  },
-  badgeMuted: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.04)'
-  },
-  badgeMutedLabel: {
-    color: '#e4e4e7',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase'
-  },
-  badgePositive: {
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(34,197,94,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.24)'
-  },
-  badgePositiveLabel: {
-    color: '#bbf7d0',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase'
-  },
-  searchInput: {
-    height: 54,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#141414',
-    color: '#fafafa',
-    paddingHorizontal: 16,
-    fontSize: 15
-  },
-  actionColumn: {
-    gap: 10
-  },
-  primaryAction: {
-    borderRadius: 22,
-    height: 54,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: BRAND
-  },
-  primaryActionLabel: {
-    color: '#03130a',
-    fontSize: 15,
-    fontWeight: '900'
-  },
-  secondaryAction: {
-    borderRadius: 22,
-    height: 54,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.04)'
-  },
-  secondaryActionLabel: {
-    color: '#fafafa',
-    fontSize: 14,
-    fontWeight: '700'
-  },
-  metricsGrid: {
-    gap: 12
-  },
-  metricCard: {
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#111111',
-    padding: 16,
-    gap: 6
-  },
-  metricLabel: {
-    color: '#71717a',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 2,
-    textTransform: 'uppercase'
-  },
-  metricValue: {
-    color: '#ffffff',
-    fontSize: 17,
-    fontWeight: '800'
-  },
-  metricText: {
-    color: '#a1a1aa',
-    fontSize: 12,
-    lineHeight: 18
-  },
-  noticeCard: {
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.18)',
-    backgroundColor: 'rgba(15,50,31,0.34)',
-    padding: 16
-  },
-  noticeText: {
-    color: '#d4d4d8',
-    fontSize: 13,
-    lineHeight: 20
-  },
-  songCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: '#121212',
-    padding: 14
-  },
-  songArtworkShell: {
-    height: 62,
-    width: 62,
-    borderRadius: 18,
-    overflow: 'hidden',
-    backgroundColor: '#1b1b1b'
-  },
-  songArtwork: {
-    height: '100%',
-    width: '100%'
-  },
-  songArtworkFallback: {
-    height: 62,
-    width: 62,
-    borderRadius: 18,
-    backgroundColor: '#1b1b1b'
-  },
-  songMeta: {
-    flex: 1,
-    gap: 4
-  },
-  songTitle: {
-    color: '#fafafa',
-    fontSize: 16,
-    fontWeight: '800'
-  },
-  songSubtitle: {
-    color: '#a1a1aa',
-    fontSize: 12,
-    lineHeight: 18
-  },
-  songPath: {
-    color: '#52525b',
-    fontSize: 11
-  },
-  iconAction: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(34,197,94,0.14)',
-    borderWidth: 1,
-    borderColor: 'rgba(34,197,94,0.22)'
-  },
-  iconActionLabel: {
-    color: '#bbf7d0',
-    fontSize: 12,
-    fontWeight: '800'
-  },
-  playlistCard: {
-    gap: 12
-  },
-  playlistCoverShell: {
-    height: 212,
-    borderRadius: 28,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: '#121212',
-    justifyContent: 'flex-end'
-  },
-  playlistCover: {
-    ...StyleSheet.absoluteFillObject
-  },
-  playlistCoverFallback: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#161616'
-  },
-  playlistOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.34)'
-  },
-  playlistCopy: {
-    padding: 18,
-    gap: 6
-  },
-  playlistEyebrow: {
-    color: '#e4e4e7',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 2,
-    textTransform: 'uppercase'
-  },
-  playlistName: {
-    color: '#ffffff',
-    fontSize: 28,
-    fontWeight: '900',
-    letterSpacing: -1
-  },
-  playlistMeta: {
-    color: '#d4d4d8',
-    fontSize: 13
-  },
-  emptyCard: {
-    borderRadius: 28,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: '#111111',
-    padding: 18,
+    padding: 12,
     gap: 8
   },
-  emptyTitle: {
-    color: '#fafafa',
-    fontSize: 18,
-    fontWeight: '800'
+  title: { color: '#f5f7fb', fontSize: 17, fontWeight: '800' },
+  subTitle: { color: '#f5f7fb', fontSize: 15, fontWeight: '700' },
+  meta: { color: '#96a0b8', fontSize: 13, lineHeight: 18 },
+  progress: { color: '#b7ff47', fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  toggle: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#27314a',
+    backgroundColor: '#0f131c'
   },
-  emptyText: {
-    color: '#a1a1aa',
-    fontSize: 13,
-    lineHeight: 20
-  },
-  playerDock: {
-    position: 'absolute',
-    left: 14,
-    right: 14,
-    bottom: 14,
+  toggleActive: { borderColor: '#b7ff47', backgroundColor: '#16220a' },
+  bar: { height: 10, borderRadius: 999, backgroundColor: '#131a28', overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 999, backgroundColor: '#b7ff47' },
+  boot: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  btn: {
+    minHeight: 44,
+    borderRadius: 14,
+    backgroundColor: '#b7ff47',
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(7,7,7,0.96)',
+    justifyContent: 'center',
+    gap: 8
+  },
+  btnSecondary: { backgroundColor: '#1f2b42' },
+  btnGhost: { backgroundColor: '#121826', borderWidth: 1, borderColor: '#27314a' },
+  btnDisabled: { opacity: 0.5 },
+  btnText: { color: '#09110a', fontSize: 14, fontWeight: '800' },
+  btnTextAlt: { color: '#eef2ff' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
     paddingHorizontal: 14,
-    paddingVertical: 12
-  },
-  playerThumb: {
-    height: 48,
-    width: 48,
-    borderRadius: 16,
-    backgroundColor: '#1a1a1a'
-  },
-  playerInfo: {
-    flex: 1,
-    gap: 3
-  },
-  playerTitle: {
-    color: '#fafafa',
-    fontSize: 14,
-    fontWeight: '800'
-  },
-  playerSubtitle: {
-    color: '#71717a',
-    fontSize: 11
-  },
-  playerBadge: {
+    paddingVertical: 10,
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    backgroundColor: 'rgba(255,255,255,0.06)'
+    backgroundColor: '#101722',
+    borderWidth: 1,
+    borderColor: '#27314a'
   },
-  playerBadgeLabel: {
-    color: '#fafafa',
-    fontSize: 11,
-    fontWeight: '800'
-  }
+  chipActive: { backgroundColor: '#b7ff47', borderColor: '#b7ff47' },
+  chipText: { color: '#d4daec', fontSize: 13, fontWeight: '700' },
+  chipTextActive: { color: '#09110a' }
 });

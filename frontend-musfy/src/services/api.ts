@@ -8,19 +8,13 @@ function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))];
 }
 
-function getDesktopServiceBaseUrl() {
-  try {
-    return window.musfyDesktop?.getServiceConfig()?.baseUrl || '';
-  } catch {
-    return '';
-  }
-}
-
 function buildCandidateBaseUrls() {
   const envBaseUrl = import.meta.env.VITE_API_BASE_URL
     ? String(import.meta.env.VITE_API_BASE_URL)
     : '';
-  const desktopBaseUrl = typeof window !== 'undefined' ? getDesktopServiceBaseUrl() : '';
+  const desktopConfig = typeof window !== 'undefined' ? window.musfyDesktop?.getServiceConfig?.() || null : null;
+  const desktopBaseUrl = desktopConfig?.baseUrl || '';
+  const desktopPort = Number(desktopConfig?.port || 0) || 0;
 
   if (typeof window === 'undefined') {
     return unique([envBaseUrl, 'http://localhost:3001', 'http://127.0.0.1:3001']);
@@ -28,8 +22,14 @@ function buildCandidateBaseUrls() {
 
   const { protocol, hostname, port, origin } = window.location;
   const sameOriginBackend =
-    (protocol === 'http:' || protocol === 'https:') && port === '3001' ? origin : '';
-  const hostnameBackend = hostname ? `http://${hostname}:3001` : '';
+    (protocol === 'http:' || protocol === 'https:') &&
+    desktopPort > 0 &&
+    port === String(desktopPort)
+      ? origin
+      : '';
+  const hostnameBackend = hostname
+    ? `http://${hostname}:${desktopPort > 0 ? desktopPort : 3001}`
+    : '';
 
   return unique([
     envBaseUrl,
@@ -41,8 +41,7 @@ function buildCandidateBaseUrls() {
   ]);
 }
 
-const candidateBaseUrls = buildCandidateBaseUrls();
-let activeBaseUrl = candidateBaseUrls[0] || 'http://localhost:3001';
+let activeBaseUrl = buildCandidateBaseUrls()[0] || 'http://localhost:3001';
 
 const api = axios.create({
   baseURL: activeBaseUrl,
@@ -51,6 +50,11 @@ const api = axios.create({
 
 api.interceptors.request.use((config) => {
   const nextConfig = config as RetryableConfig;
+  const liveBaseUrl = buildCandidateBaseUrls()[0] || activeBaseUrl;
+  if (liveBaseUrl && liveBaseUrl !== activeBaseUrl) {
+    activeBaseUrl = liveBaseUrl;
+    api.defaults.baseURL = activeBaseUrl;
+  }
   nextConfig.baseURL = nextConfig.baseURL || activeBaseUrl;
   nextConfig._triedBaseUrls = nextConfig._triedBaseUrls || [];
   return nextConfig;
@@ -77,7 +81,7 @@ api.interceptors.response.use(
       triedBaseUrls.add(config.baseURL);
     }
 
-    for (const candidate of candidateBaseUrls) {
+    for (const candidate of buildCandidateBaseUrls()) {
       if (!candidate || triedBaseUrls.has(candidate)) continue;
 
       triedBaseUrls.add(candidate);

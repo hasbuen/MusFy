@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.ServiceProcess;
 
 namespace MusFy.ServiceHost
@@ -8,6 +10,8 @@ namespace MusFy.ServiceHost
     public sealed class MusFyWindowsService : ServiceBase
     {
         private const string ServiceInternalName = "MusFyHostService";
+        private const int DefaultPort = 3001;
+        private const int PortScanWindow = 40;
         private Process _backendProcess;
         private string _logPath;
 
@@ -44,6 +48,11 @@ namespace MusFy.ServiceHost
                 throw new FileNotFoundException("Backend MusFy nao encontrado.", backendEntry);
             }
 
+            var bindHost = "0.0.0.0";
+            var rendererHost = "127.0.0.1";
+            var port = FindAvailablePort(DefaultPort);
+            Log(string.Format("Porta selecionada para o backend: {0}", port));
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = runtimeNode,
@@ -56,8 +65,8 @@ namespace MusFy.ServiceHost
                 RedirectStandardError = true
             };
 
-            startInfo.EnvironmentVariables["HOST"] = "0.0.0.0";
-            startInfo.EnvironmentVariables["PORT"] = "3001";
+            startInfo.EnvironmentVariables["HOST"] = bindHost;
+            startInfo.EnvironmentVariables["PORT"] = port.ToString();
             startInfo.EnvironmentVariables["MUSFY_SERVICE_BOOT"] = "1";
             startInfo.EnvironmentVariables["MUSFY_SERVICE_MODE"] = "local-service";
             startInfo.EnvironmentVariables["MUSFY_FRONTEND_DIST"] = frontendDist;
@@ -96,6 +105,7 @@ namespace MusFy.ServiceHost
 
             _backendProcess.BeginOutputReadLine();
             _backendProcess.BeginErrorReadLine();
+            WriteRuntimeState(rendererHost, port);
             Log(string.Format("Backend MusFy iniciado. PID={0}", _backendProcess.Id));
         }
 
@@ -117,6 +127,7 @@ namespace MusFy.ServiceHost
                 if (_backendProcess == null || _backendProcess.HasExited)
                 {
                     Log("OnStop chamado sem processo backend ativo.");
+                    DeleteRuntimeState();
                     return;
                 }
 
@@ -147,12 +158,126 @@ namespace MusFy.ServiceHost
             }
             finally
             {
+                DeleteRuntimeState();
                 if (_backendProcess != null)
                 {
                     _backendProcess.Dispose();
                 }
                 _backendProcess = null;
             }
+        }
+
+        private static int FindAvailablePort(int preferredPort)
+        {
+            for (var port = preferredPort; port < preferredPort + PortScanWindow; port++)
+            {
+                if (IsPortAvailable(port))
+                {
+                    return port;
+                }
+            }
+
+            return ReserveEphemeralPort();
+        }
+
+        private static bool IsPortAvailable(int port)
+        {
+            TcpListener listener = null;
+            try
+            {
+                listener = new TcpListener(IPAddress.Any, port);
+                listener.Server.ExclusiveAddressUse = true;
+                listener.Start();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                try
+                {
+                    if (listener != null)
+                    {
+                        listener.Stop();
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static int ReserveEphemeralPort()
+        {
+            TcpListener listener = null;
+            try
+            {
+                listener = new TcpListener(IPAddress.Any, 0);
+                listener.Start();
+                return ((IPEndPoint)listener.LocalEndpoint).Port;
+            }
+            finally
+            {
+                try
+                {
+                    if (listener != null)
+                    {
+                        listener.Stop();
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static string ResolveRuntimeStatePath()
+        {
+            var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            var runtimeDir = Path.Combine(programData, "MusFy");
+            Directory.CreateDirectory(runtimeDir);
+            return Path.Combine(runtimeDir, "service-runtime.json");
+        }
+
+        private void WriteRuntimeState(string host, int port)
+        {
+            try
+            {
+                var content = string.Format(
+                    "{{\"host\":\"{0}\",\"port\":{1},\"baseUrl\":\"http://{0}:{1}\",\"source\":\"external\",\"updatedAt\":\"{2:o}\"}}",
+                    EscapeJson(host),
+                    port,
+                    DateTime.UtcNow
+                );
+                File.WriteAllText(ResolveRuntimeStatePath(), content);
+            }
+            catch (Exception error)
+            {
+                Log("Falha ao gravar runtime compartilhado: " + error.Message);
+            }
+        }
+
+        private void DeleteRuntimeState()
+        {
+            try
+            {
+                var file = ResolveRuntimeStatePath();
+                if (File.Exists(file))
+                {
+                    File.Delete(file);
+                }
+            }
+            catch (Exception error)
+            {
+                Log("Falha ao limpar runtime compartilhado: " + error.Message);
+            }
+        }
+
+        private static string EscapeJson(string value)
+        {
+            return (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
         }
 
         private void Log(string message)
@@ -163,7 +288,6 @@ namespace MusFy.ServiceHost
             }
             catch
             {
-                // Ignora falha de log para nao derrubar o servico.
             }
         }
     }

@@ -75,7 +75,7 @@ interface Playlist {
   updatedAt?: string;
 }
 
-type YoutubeDownloadMode = 'single' | 'playlist';
+type YoutubeDownloadMode = 'single' | 'playlist' | 'video';
 
 interface YoutubeAnalysis {
   kind: 'single' | 'playlist';
@@ -1389,12 +1389,6 @@ export default function App() {
                 </span>
               </button>
 
-              <div className="rounded-[24px] border border-white/10 bg-[#0d0d0d] p-5">
-                <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Endereco do host</p>
-                <p className="mt-3 break-all text-base font-semibold text-white">{api.defaults.baseURL}</p>
-                <p className="mt-2 text-sm leading-6 text-gray-400">Este endereco e usado pelo desktop e pelos clientes da rede local.</p>
-              </div>
-
               <div
                 ref={desktopUpdatePanelRef}
                 className={`rounded-[24px] border bg-[#0d0d0d] p-5 transition ${
@@ -1408,22 +1402,12 @@ export default function App() {
                     <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Atualizações do GitHub</p>
                     <p className="mt-3 text-base font-semibold text-white">Versão atual {desktopUpdateStatus.currentVersion}</p>
                     <p className="mt-2 text-sm leading-6 text-gray-400">
-                      O MusFy cruza o feed automático com a última tag publicada no GitHub Releases para avisar quando entrar uma atualização nova.
+                      O MusFy verifica as releases publicadas em segundo plano e avisa quando entra uma atualização nova.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-gray-300">
                     {updateStatusLabel}
                   </span>
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Canal automático</p>
-                  <p className="mt-3 break-all text-sm font-semibold text-white">
-                    {desktopUpdateStatus.feedUrl || 'Canal embutido indisponível'}
-                  </p>
-                  <p className="mt-2 text-xs leading-5 text-gray-500">
-                    O usuário final não precisa conhecer esse endereço. O MusFy consulta esse release sozinho em segundo plano.
-                  </p>
                 </div>
 
                 <div
@@ -2066,7 +2050,7 @@ export default function App() {
       const backendMessage = error?.response?.data?.error;
       const networkMessage =
         error?.message === 'Network Error'
-          ? 'Falha ao falar com o backend na porta 3001. Confirme se o servico local esta rodando.'
+          ? 'Falha ao falar com o backend local. Confirme se o servico MusFy esta rodando.'
           : null;
       setYoutubeSearchMessage(backendMessage || networkMessage || 'Falha ao buscar no YouTube.');
     } finally {
@@ -2165,7 +2149,7 @@ export default function App() {
       const backendMessage = error?.response?.data?.error;
       const networkMessage =
         error?.message === 'Network Error'
-          ? 'Falha ao falar com o backend na porta 3001. Confirme se o servidor esta rodando.'
+          ? 'Falha ao falar com o backend local. Confirme se o servidor MusFy esta rodando.'
           : error?.code === 'ECONNABORTED'
             ? 'A análise do link demorou demais. O backend ainda pode estar consultando o YouTube.'
             : null;
@@ -2215,6 +2199,8 @@ export default function App() {
     setDownloadMessage(
       task.mode === 'playlist'
         ? `Baixando playlist "${task.label}" e convertendo faixas para OPUS...`
+        : task.mode === 'video'
+          ? `Baixando video "${task.label}" e preparando o playback no MusFy...`
         : `Baixando faixa "${task.label}" e convertendo para OPUS...`
     );
     await loadActivityLogs().catch(console.error);
@@ -2271,13 +2257,13 @@ export default function App() {
       const backendMessage = error?.response?.data?.error;
       const networkMessage =
         error?.message === 'Network Error'
-          ? 'Falha ao falar com o backend na porta 3001. Confirme se o servidor está rodando.'
+          ? 'Falha ao falar com o backend local. Confirme se o servidor MusFy esta rodando.'
           : error?.response?.data?.paused
             ? 'Download pausado. Você pode retomar pela fila de downloads.'
           : error?.code === 'ECONNABORTED'
             ? 'O download ainda está em processamento no backend. Aguarde a conversão terminar na fila ao lado.'
             : null;
-      setDownloadMessage(backendMessage || networkMessage || 'Falha ao baixar áudio do YouTube.');
+      setDownloadMessage(backendMessage || networkMessage || 'Falha ao baixar conteudo do YouTube.');
     } finally {
       await loadActivityLogs().catch(console.error);
       setIsDownloading(false);
@@ -4256,7 +4242,7 @@ export default function App() {
                 </p>
                 {youtubeActionModal.analysis.kind === 'playlist' && youtubeActionModal.analysis.playlist ? (
                   <p className="mt-3 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm font-medium text-cyan-50">
-                    Você quer baixar só a faixa destacada ou a playlist inteira? Se escolher a playlist inteira, o MusFy cria uma playlist nova automaticamente com o nome correto.
+                    Você pode baixar só a faixa destacada, salvar apenas o vídeo dela ou importar a playlist inteira. Se escolher a playlist completa, o MusFy cria tudo com o nome correto.
                   </p>
                 ) : null}
                 {youtubeActionModal.analysis.selectedEntry?.title ? (
@@ -4288,6 +4274,21 @@ export default function App() {
                   <p className="text-sm font-semibold text-white">Salvar só a faixa agora</p>
                   <p className="mt-2 text-xs leading-5 text-gray-400">
                     Baixa apenas a faixa destacada e publica direto na biblioteca atual.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const analysis = youtubeActionModal.analysis;
+                    setYoutubeActionModal(null);
+                    void startYoutubeDownload('video', analysis);
+                  }}
+                  disabled={isDownloading || isInspectingYoutube || !youtubeActionModal.analysis.selectedEntry}
+                  className="rounded-[24px] border border-cyan-400/30 bg-cyan-400/10 p-5 text-left transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <p className="text-sm font-semibold text-white">Salvar só o vídeo agora</p>
+                  <p className="mt-2 text-xs leading-5 text-cyan-100/80">
+                    Baixa o vídeo da faixa destacada para assistir no MusFy sem puxar um download de áudio separado do YouTube.
                   </p>
                 </button>
 

@@ -381,7 +381,7 @@ async function executeDownloadJob(jobId) {
       assertJobNotPaused(jobId);
 
       const resolvedMode =
-        requestedMode === 'single' || requestedMode === 'playlist'
+        requestedMode === 'single' || requestedMode === 'playlist' || requestedMode === 'video'
           ? requestedMode
           : analysis.kind === 'playlist'
             ? 'playlist'
@@ -391,7 +391,12 @@ async function executeDownloadJob(jobId) {
         mode: resolvedMode,
         progress: 8,
         stage: 'inspect',
-        message: analysis.kind === 'playlist' ? 'Playlist detectada' : 'Faixa unica detectada'
+        message:
+          resolvedMode === 'video'
+            ? 'Video selecionado'
+            : analysis.kind === 'playlist'
+              ? 'Playlist detectada'
+              : 'Faixa unica detectada'
       });
 
       if (resolvedMode === 'playlist') {
@@ -486,6 +491,7 @@ async function executeDownloadJob(jobId) {
         manualArtist,
         manualTitle,
         includeVideo,
+        downloadMode: resolvedMode,
         jobId,
         onProgress: (patch) =>
           updateDownloadJob(jobId, {
@@ -508,7 +514,7 @@ async function executeDownloadJob(jobId) {
 
       return {
         success: true,
-        mode: 'single',
+        mode: resolvedMode,
         jobId,
         music: serializeMusicForUser(music, userId),
         playlist: targetPlaylist ? serializePlaylistForUser(targetPlaylist, userId) : null,
@@ -2448,6 +2454,7 @@ async function downloadSingleYoutubeTrack({
   manualTitle,
   albumTitle,
   includeVideo = false,
+  downloadMode = 'single',
   onProgress = null,
   jobId = null
 }) {
@@ -2472,6 +2479,8 @@ async function downloadSingleYoutubeTrack({
     fullTitle: '',
     altTitle: ''
   };
+  const isVideoOnlyDownload = downloadMode === 'video';
+  const shouldKeepVideo = includeVideo || isVideoOnlyDownload;
 
   try {
     const preFetchedMetadata = await fetchYoutubeSingleMetadata(url, jobId);
@@ -2488,12 +2497,13 @@ async function downloadSingleYoutubeTrack({
     addLog(`[warn] Falha ao consultar metadados antes do download: ${err.message}`);
   }
 
-  const args = getYtDlpSingleArgs(url, baseFile);
-  if (typeof onProgress === 'function') {
-    onProgress({ stage: 'audio-download', progress: 4, message: 'Preparando download de audio' });
-  }
+  if (!isVideoOnlyDownload) {
+    const args = getYtDlpSingleArgs(url, baseFile);
+    if (typeof onProgress === 'function') {
+      onProgress({ stage: 'audio-download', progress: 4, message: 'Preparando download de audio' });
+    }
 
-  await robustDownload(
+    await robustDownload(
     async (attempt) => {
       await cleanupGeneratedFilesByPrefix(prefix);
 
@@ -2585,48 +2595,57 @@ async function downloadSingleYoutubeTrack({
         });
       });
     },
-    5,
-    3000
-  );
-
-  const files = fs
-    .readdirSync(opusDir)
-    .filter((file) => file.startsWith(prefix))
-    .sort((a, b) => a.localeCompare(b));
-
-  if (!files.length) {
-    throw new Error('Arquivo de audio nao foi gerado');
+      5,
+      3000
+    );
+  } else if (typeof onProgress === 'function') {
+    onProgress({ stage: 'video-download', progress: 8, message: 'Preparando download de video' });
   }
 
-  const sourceCandidates = files
-    .map((file) => path.join(opusDir, file))
-    .filter((file) => path.resolve(file) !== path.resolve(finalFile));
-  const sourceFile =
-    sourceCandidates.find((file) => /\.(webm|m4a|mp4|mp3|ogg|opus)$/i.test(file)) || sourceCandidates[0];
+  if (!isVideoOnlyDownload) {
+    const files = fs
+      .readdirSync(opusDir)
+      .filter((file) => file.startsWith(prefix))
+      .sort((a, b) => a.localeCompare(b));
 
-  if (!sourceFile || !fs.existsSync(sourceFile)) {
-    throw new Error('Arquivo bruto do YouTube nao foi localizado para conversao');
-  }
+    if (!files.length) {
+      throw new Error('Arquivo de audio nao foi gerado');
+    }
 
-  cleanupFileIfExists(finalFile);
-  if (typeof onProgress === 'function') {
-    onProgress({ stage: 'convert', progress: includeVideo ? 74 : 100, message: 'Convertendo audio para OPUS 16k' });
-  }
-  addLog(`[convert] Iniciando conversao para OPUS 16k | origem=${path.basename(sourceFile)}`);
-  await convertToOpus(sourceFile, finalFile, jobId);
-  cleanupFileIfExists(sourceFile);
+    const sourceCandidates = files
+      .map((file) => path.join(opusDir, file))
+      .filter((file) => path.resolve(file) !== path.resolve(finalFile));
+    const sourceFile =
+      sourceCandidates.find((file) => /\.(webm|m4a|mp4|mp3|ogg|opus)$/i.test(file)) || sourceCandidates[0];
 
-  const leftovers = fs
-    .readdirSync(opusDir)
-    .filter((file) => file.startsWith(prefix) && path.resolve(path.join(opusDir, file)) !== path.resolve(finalFile));
-  leftovers.forEach((file) => cleanupFileIfExists(path.join(opusDir, file)));
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
+      throw new Error('Arquivo bruto do YouTube nao foi localizado para conversao');
+    }
 
-  if (!fs.existsSync(finalFile)) {
-    throw new Error('Arquivo OPUS final nao foi gerado');
+    cleanupFileIfExists(finalFile);
+    if (typeof onProgress === 'function') {
+      onProgress({
+        stage: 'convert',
+        progress: shouldKeepVideo ? 74 : 100,
+        message: 'Convertendo audio para OPUS 16k'
+      });
+    }
+    addLog(`[convert] Iniciando conversao para OPUS 16k | origem=${path.basename(sourceFile)}`);
+    await convertToOpus(sourceFile, finalFile, jobId);
+    cleanupFileIfExists(sourceFile);
+
+    const leftovers = fs
+      .readdirSync(opusDir)
+      .filter((file) => file.startsWith(prefix) && path.resolve(path.join(opusDir, file)) !== path.resolve(finalFile));
+    leftovers.forEach((file) => cleanupFileIfExists(path.join(opusDir, file)));
+
+    if (!fs.existsSync(finalFile)) {
+      throw new Error('Arquivo OPUS final nao foi gerado');
+    }
   }
 
   let finalVideoFile = null;
-  if (includeVideo) {
+  if (shouldKeepVideo) {
     if (typeof onProgress === 'function') {
       onProgress({ stage: 'video-download', progress: 84, message: 'Baixando video para o player' });
     }
@@ -2736,6 +2755,23 @@ async function downloadSingleYoutubeTrack({
     }
   }
 
+  if (isVideoOnlyDownload) {
+    if (!finalVideoFile || !fs.existsSync(finalVideoFile)) {
+      throw new Error('Arquivo de video nao foi gerado');
+    }
+
+    cleanupFileIfExists(finalFile);
+    if (typeof onProgress === 'function') {
+      onProgress({ stage: 'convert', progress: 96, message: 'Extraindo audio interno do video' });
+    }
+    addLog(`[convert] Extraindo trilha de audio do video | origem=${path.basename(finalVideoFile)}`);
+    await convertToOpus(finalVideoFile, finalFile, jobId);
+
+    if (!fs.existsSync(finalFile)) {
+      throw new Error('Arquivo OPUS final nao foi gerado a partir do video');
+    }
+  }
+
   const resolvedMetadata = resolveYoutubeTrackMetadata(metadata, videoId || id);
   const resolvedTitle = cleanYoutubeMetadataText(
     manualTitle || resolvedMetadata.title || metadata.title || `YouTube ${videoId || id}`
@@ -2772,7 +2808,7 @@ async function downloadSingleYoutubeTrack({
     onProgress({
       stage: 'done',
       progress: 100,
-      message: includeVideo ? 'Audio e video concluidos' : 'Faixa concluida'
+      message: isVideoOnlyDownload ? 'Video concluido' : shouldKeepVideo ? 'Audio e video concluidos' : 'Faixa concluida'
     });
   }
 

@@ -159,3 +159,38 @@ export async function listOfflineTracks() {
     sizeBytes: row.size_bytes
   })) as OfflineTrack[];
 }
+
+export async function getOfflineTrack(songId: string) {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{
+    song_id: string;
+    title: string;
+    artist: string | null;
+    thumbnail: string | null;
+    local_uri: string;
+    mime_type: string | null;
+    saved_at: string;
+    size_bytes: number | null;
+  }>('SELECT * FROM offline_tracks WHERE song_id = ?', [songId]);
+
+  if (!row) return null;
+
+  return {
+    songId: row.song_id,
+    title: row.title,
+    artist: row.artist,
+    thumbnail: row.thumbnail,
+    localUri: row.local_uri,
+    mimeType: row.mime_type,
+    savedAt: row.saved_at,
+    sizeBytes: row.size_bytes
+  } satisfies OfflineTrack;
+}
+
+export async function removeOfflineTrack(songId: string) {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM offline_playlist_items WHERE song_id = ?', [songId]);
+    await db.runAsync('DELETE FROM offline_tracks WHERE song_id = ?', [songId]);
+  });
+}

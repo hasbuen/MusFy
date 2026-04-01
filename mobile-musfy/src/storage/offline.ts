@@ -1,6 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { fetch as expoFetch } from 'expo/fetch';
-import { saveOfflineTrack } from './database';
+import { removeOfflineTrack, saveOfflineTrack } from './database';
 import type { OfflineTrack, Playlist, Song } from '../types';
 
 function getOfflineDirectory() {
@@ -70,4 +70,13 @@ export async function downloadPlaylistOffline(baseUrl: string, playlist: Playlis
     completed += 1;
     onProgress?.(completed, songs.length);
   }
+}
+
+export async function removeSongOffline(track: OfflineTrack) {
+  const file = new File(track.localUri);
+  if (file.exists) {
+    file.delete();
+  }
+
+  await removeOfflineTrack(track.songId);
 }
