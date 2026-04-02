@@ -33,6 +33,14 @@ frontend-musfy/build/installerSidebar.bmp
 frontend-musfy/build/uninstallerSidebar.bmp
 frontend-musfy/build/windows/MusFyServiceHost.exe
 mobile-musfy/web-build/
+mobile-musfy/.android-sdk/
+mobile-musfy/.gradle-home/
+mobile-musfy/focus-*.xml
+mobile-musfy/memu-*.png
+mobile-musfy/memu-*.xml
+mobile-musfy/musfy-*.png
+mobile-musfy/type-test.xml
+mobile-musfy/window_dump*.xml
 musfy-update-host/.vercel/
 
 # Generated local media/state

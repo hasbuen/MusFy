@@ -1,5 +1,7 @@
 import type {
   AndroidApkInfo,
+  DeviceCommand,
+  DeviceSummary,
   DownloadJob,
   DownloadMode,
   HealthStatus,
@@ -190,6 +192,113 @@ export async function registerAndroidDevice(baseUrl: string, deviceId: string, d
       userId: userId || undefined,
       platform: 'android'
     })
+  });
+}
+
+export async function fetchDevices(
+  baseUrl: string,
+  options?: {
+    userId?: string | null;
+    excludeDeviceId?: string | null;
+  }
+) {
+  const searchParams = new URLSearchParams();
+  if (options?.userId) searchParams.set('userId', options.userId);
+  if (options?.excludeDeviceId) searchParams.set('excludeDeviceId', options.excludeDeviceId);
+  const suffix = searchParams.toString();
+  return await readJson<DeviceSummary[]>(`${normalizeBaseUrl(baseUrl)}/devices${suffix ? `?${suffix}` : ''}`);
+}
+
+export async function sendDeviceCommand(
+  baseUrl: string,
+  targetDeviceId: string,
+  payload: {
+    sourceDeviceId?: string | null;
+    sourceDeviceName?: string | null;
+    userId?: string | null;
+    targetDeviceName?: string | null;
+    payload: Record<string, unknown>;
+  }
+) {
+  return await readJson<{ success?: boolean; commandId?: number }>(
+    `${normalizeBaseUrl(baseUrl)}/devices/${targetDeviceId}/command`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    }
+  );
+}
+
+export async function fetchDeviceCommand(
+  baseUrl: string,
+  deviceId: string,
+  options: {
+    deviceName: string;
+    userId?: string | null;
+    platform?: string | null;
+    after?: number;
+  }
+) {
+  const searchParams = new URLSearchParams({
+    deviceName: options.deviceName
+  });
+  if (options.userId) searchParams.set('userId', options.userId);
+  if (options.platform) searchParams.set('platform', options.platform);
+  if (options.after) searchParams.set('after', String(options.after));
+  const payload = await readJson<{ command?: DeviceCommand | null }>(
+    `${normalizeBaseUrl(baseUrl)}/devices/${deviceId}/command?${searchParams.toString()}`
+  );
+  return payload?.command || null;
+}
+
+export async function ackDeviceCommand(
+  baseUrl: string,
+  deviceId: string,
+  payload: {
+    deviceName: string;
+    userId?: string | null;
+    platform?: string | null;
+    commandId: number;
+    status?: 'received' | 'completed' | 'error';
+    details?: string | null;
+  }
+) {
+  return await readJson<{ success?: boolean }>(`${normalizeBaseUrl(baseUrl)}/devices/${deviceId}/ack`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function sendDeviceState(
+  baseUrl: string,
+  deviceId: string,
+  payload: {
+    deviceName: string;
+    userId?: string | null;
+    platform?: string | null;
+    status?: string | null;
+    currentSongId?: string | null;
+    currentSongTitle?: string | null;
+    currentSongArtist?: string | null;
+    isPlaying?: boolean;
+    currentTime?: number;
+    duration?: number;
+    volume?: number;
+    errorMessage?: string | null;
+  }
+) {
+  return await readJson<{ success?: boolean }>(`${normalizeBaseUrl(baseUrl)}/devices/${deviceId}/state`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
   });
 }
 

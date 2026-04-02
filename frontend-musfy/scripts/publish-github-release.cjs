@@ -5,6 +5,7 @@ const { spawnSync } = require('child_process');
 const DEFAULT_GITHUB_OWNER = 'hasbuen';
 const DEFAULT_GITHUB_REPO = 'Projects';
 const REQUIRED_ARTIFACTS = ['latest.yml', 'MusFy-Setup.exe', 'MusFy-Setup.exe.blockmap'];
+const DEFAULT_ANDROID_APK_ASSET_NAME = 'MusFy-Android.apk';
 const DEFAULT_GITHUB_MAX_ATTEMPTS = 4;
 const DEFAULT_GITHUB_RETRY_DELAY_MS = 2500;
 
@@ -50,12 +51,17 @@ async function main() {
     runBuild(requestedVersion, relativeOutputDir);
   }
 
+  const androidApkArtifact = prepareAndroidApkArtifact({
+    args,
+    outputDir
+  });
+
   applyReleaseMetadata(outputDir, {
     releaseName,
     releaseNotes
   });
 
-  const artifacts = collectArtifacts(outputDir, requestedVersion);
+  const artifacts = collectArtifacts(outputDir, requestedVersion, androidApkArtifact ? [androidApkArtifact] : []);
   console.log(`[release] artefatos prontos: ${artifacts.map((artifact) => artifact.name).join(', ')}`);
 
   if (buildOnly) {
@@ -275,7 +281,7 @@ function runCommand(command, commandArgs, label) {
   }
 }
 
-function collectArtifacts(targetDir, version) {
+function collectArtifacts(targetDir, version, extraArtifacts = []) {
   if (!fs.existsSync(targetDir)) {
     fail(`Pasta de release nao encontrada: ${targetDir}`);
   }
@@ -299,7 +305,57 @@ function collectArtifacts(targetDir, version) {
     fail(`latest.yml foi gerado sem a versao esperada ${version}.`);
   }
 
-  return artifacts;
+  return [...artifacts, ...extraArtifacts];
+}
+
+function prepareAndroidApkArtifact({ args, outputDir }) {
+  if (asBoolean(args['skip-android-apk'], false)) {
+    console.log('[release] skip-android-apk ativo, asset mobile nao sera publicado.');
+    return null;
+  }
+
+  const sourcePath = resolveAndroidApkSource(args);
+  if (!sourcePath) {
+    fail(
+      'APK Android nao encontrado. Gere o release APK antes de publicar ou informe --android-apk caminho/do/app-release.apk.'
+    );
+  }
+
+  const targetPath = path.join(outputDir, DEFAULT_ANDROID_APK_ASSET_NAME);
+  fs.copyFileSync(sourcePath, targetPath);
+
+  return {
+    name: DEFAULT_ANDROID_APK_ASSET_NAME,
+    filePath: targetPath,
+    contentType: 'application/vnd.android.package-archive',
+    size: fs.statSync(targetPath).size
+  };
+}
+
+function resolveAndroidApkSource(args) {
+  const explicitPath = String(args['android-apk'] || process.env.MUSFY_ANDROID_APK_PATH || '').trim();
+  const defaultPath = path.resolve(
+    frontendRoot,
+    '..',
+    'mobile-musfy',
+    'android',
+    'app',
+    'build',
+    'outputs',
+    'apk',
+    'release',
+    'app-release.apk'
+  );
+  const candidates = [explicitPath, defaultPath].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const resolved = path.isAbsolute(candidate) ? candidate : path.resolve(frontendRoot, candidate);
+    if (fs.existsSync(resolved)) {
+      return resolved;
+    }
+  }
+
+  return null;
 }
 
 function getContentType(fileName) {

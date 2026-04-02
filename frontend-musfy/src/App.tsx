@@ -7,6 +7,7 @@ import {
   Compass,
   Download,
   Expand,
+  FolderOpen,
   HardDriveDownload,
   Heart,
   Home,
@@ -38,6 +39,7 @@ import {
   X
 } from 'lucide-react';
 import api from './services/api';
+import brandMark from './assets/musfy-mark.svg';
 
 interface Song {
   id: string;
@@ -150,6 +152,7 @@ interface AndroidApkInfo {
   localUrls: string[];
   preferredUrl?: string | null;
   externalUrl?: string | null;
+  releaseUrl?: string | null;
   storagePath?: string | null;
 }
 
@@ -218,6 +221,10 @@ interface DownloadJob {
   updatedAt?: string;
   items?: DownloadJobItem[];
 }
+
+const GITHUB_RELEASES_LATEST_URL = 'https://github.com/hasbuen/Projects/releases/latest';
+const GITHUB_ANDROID_APK_URL = `${GITHUB_RELEASES_LATEST_URL}/download/MusFy-Android.apk`;
+const GITHUB_ANDROID_APK_ASSET_NAME = 'MusFy-Android.apk';
 
 type ViewMode = 'grid' | 'list';
 type Section = 'home' | 'explore' | 'library' | 'favorites' | 'download' | 'settings';
@@ -428,12 +435,18 @@ function getActivityMeta(entry: string) {
   const timestamp = match ? match[1] : null;
   const message = match ? match[2] : normalizedEntry;
   const lower = message.toLowerCase();
+  const hasExplicitError =
+    lower.includes('[error]') ||
+    /\berro\b/.test(lower) ||
+    /\berror\b/.test(lower) ||
+    /^falha\b/.test(lower);
+  const hasWarnSignal = lower.includes('[warn]') || /\bfalha\b/.test(lower) || /\bignorada\b/.test(lower);
 
-  if (lower.includes('[error]') || lower.includes('erro')) {
+  if (hasExplicitError) {
     return { timestamp, message, tone: 'error' as const, label: 'Erro' };
   }
 
-  if (lower.includes('[warn]') || lower.includes('falha') || lower.includes('ignorada')) {
+  if (hasWarnSignal) {
     return { timestamp, message, tone: 'warn' as const, label: 'Alerta' };
   }
 
@@ -552,7 +565,6 @@ export default function App() {
   const [preferDownloadOnLaunch, setPreferDownloadOnLaunch] = useState(
     () => localStorage.getItem('musfy-prefer-download-on-launch') !== 'false'
   );
-  const [androidApkUrl, setAndroidApkUrl] = useState(() => localStorage.getItem('musfy-android-apk-url') || '');
   const [androidApkInfo, setAndroidApkInfo] = useState<AndroidApkInfo | null>(null);
   const [apkQrCodeDataUrl, setApkQrCodeDataUrl] = useState('');
   const [serviceStorage, setServiceStorage] = useState<any>(null);
@@ -831,7 +843,8 @@ export default function App() {
     setServiceStorage(sanitizeDeepText(storageRes.data?.storage || null));
   };
 
-  const resolvedAndroidApkUrl = (androidApkUrl || androidApkInfo?.preferredUrl || '').trim();
+  const resolvedAndroidApkUrl = (androidApkInfo?.preferredUrl || GITHUB_ANDROID_APK_URL).trim();
+  const androidReleasePageUrl = (androidApkInfo?.releaseUrl || GITHUB_RELEASES_LATEST_URL).trim();
 
   const loadYoutubeRecentSearches = async () => {
     const res = await api.get('/youtube/history', { params: { limit: 8 } });
@@ -1098,10 +1111,6 @@ export default function App() {
   }, [preferDownloadOnLaunch]);
 
   useEffect(() => {
-    localStorage.setItem('musfy-android-apk-url', androidApkUrl);
-  }, [androidApkUrl]);
-
-  useEffect(() => {
     if (!resolvedAndroidApkUrl) {
       setApkQrCodeDataUrl('');
       return;
@@ -1247,10 +1256,10 @@ export default function App() {
   const redisStatusLabel = !backendAvailable
     ? 'Aguardando host'
     : serviceStorage?.redis?.mode || 'Sem endpoint';
-  const apkStatusLabel = !backendAvailable
-    ? 'Aguardando host'
-    : androidApkInfo?.fileExists || resolvedAndroidApkUrl
-      ? 'Disponível'
+  const apkStatusLabel = resolvedAndroidApkUrl
+    ? 'GitHub latest'
+    : !backendAvailable
+      ? 'Aguardando host'
       : 'Em preparacao';
   const updateStatusLabel =
     desktopUpdateStatus.state === 'downloaded'
@@ -1549,7 +1558,7 @@ export default function App() {
               <div className="rounded-[24px] border border-white/10 bg-[#0d0d0d] p-5">
                 <p className="text-xs uppercase tracking-[0.22em] text-gray-500">APK Android</p>
                 <p className="mt-3 text-lg font-semibold text-white">{apkStatusLabel}</p>
-                <p className="mt-2 text-xs leading-5 text-gray-500">{androidApkInfo?.fileName || 'MusFy-Android.apk'}</p>
+                <p className="mt-2 text-xs leading-5 text-gray-500">{GITHUB_ANDROID_APK_ASSET_NAME}</p>
               </div>
             </div>
           </div>
@@ -1557,61 +1566,55 @@ export default function App() {
 
         <div className="space-y-6">
           <div className="rounded-[32px] border border-white/10 bg-[linear-gradient(180deg,#111111_0%,#0a0a0a_100%)] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.16)]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-green-300">Android</p>
-                <h3 className="mt-2 text-2xl font-black tracking-tight md:text-3xl">Distribuicao do APK</h3>
-                <p className="mt-3 text-sm leading-6 text-gray-400">
-                  Quando o APK existir, o QR e as URLs locais aparecem aqui sem poluir o restante da tela.
-                </p>
-              </div>
-              <div className="rounded-full border border-white/10 bg-white/[0.04] p-3 text-gray-300">
-                <Smartphone size={18} />
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-4">
-              <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-                <p className="text-xs uppercase tracking-[0.22em] text-gray-500">URL do APK</p>
-                <input
-                  value={androidApkUrl}
-                  onChange={(e) => setAndroidApkUrl(e.target.value)}
-                  placeholder={androidApkInfo?.preferredUrl || 'https://seu-servidor/musfy-android.apk'}
-                  className="mt-3 h-12 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-sm text-white outline-none focus:border-cyan-300/30"
-                />
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-green-300">Android</p>
+                  <h3 className="mt-2 text-2xl font-black tracking-tight md:text-3xl">Distribuicao do APK</h3>
+                  <p className="mt-3 text-sm leading-6 text-gray-400">
+                    O QR sempre aponta para o asset do latest release no GitHub, e o botao abre a pagina do release
+                    para download manual.
+                  </p>
+                </div>
+                <div className="rounded-full border border-white/10 bg-white/[0.04] p-3 text-gray-300">
+                  <Smartphone size={18} />
+                </div>
               </div>
 
-              <div className="flex flex-col items-center rounded-[28px] border border-dashed border-white/10 bg-[#0b0b0b] p-5 text-center">
-                {apkQrCodeDataUrl ? (
-                  <img src={apkQrCodeDataUrl} alt="QR do APK Android" className="h-52 w-52 rounded-[24px] bg-white p-3" />
+              <div className="mt-6 space-y-4">
+                <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                  <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Release do APK</p>
+                  <button
+                    type="button"
+                    onClick={() => void desktopApi.openExternal(androidReleasePageUrl)}
+                    className="mt-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-emerald-400/30 bg-emerald-500/12 px-4 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/50 hover:bg-emerald-500/18"
+                  >
+                    <FolderOpen size={16} />
+                    Abrir pasta do release
+                  </button>
+                  <p className="mt-3 text-xs leading-5 text-gray-500">
+                    Baixe manualmente o <span className="font-semibold text-gray-300">{GITHUB_ANDROID_APK_ASSET_NAME}</span>{' '}
+                    sem precisar ler o QR code.
+                  </p>
+                </div>
+
+                <div className="flex flex-col items-center rounded-[28px] border border-dashed border-white/10 bg-[#0b0b0b] p-5 text-center">
+                  {apkQrCodeDataUrl ? (
+                    <img src={apkQrCodeDataUrl} alt="QR do APK Android" className="h-52 w-52 rounded-[24px] bg-white p-3" />
                 ) : (
                   <div className="flex h-52 w-52 items-center justify-center rounded-[24px] border border-white/10 bg-white/[0.03] text-gray-500">
-                    <QrCode size={42} />
-                  </div>
-                )}
-                <p className="mt-4 text-sm font-semibold text-white">{resolvedAndroidApkUrl || 'Nenhuma URL de APK configurada ainda'}</p>
-                <p className="mt-2 text-xs leading-5 text-gray-500">
-                  {androidApkInfo?.fileExists
-                    ? 'O servidor local ja esta pronto para expor o APK pela LAN.'
-                    : 'Assim que o APK existir, este QR sera preenchido automaticamente.'}
-                </p>
-              </div>
-
-              {androidApkInfo?.localUrls?.length ? (
-                <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
-                  <p className="text-xs uppercase tracking-[0.22em] text-gray-500">URLs locais</p>
-                  <div className="mt-3 space-y-2">
-                    {androidApkInfo.localUrls.slice(0, 3).map((url) => (
-                      <p key={url} className="break-all rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-400">
-                        {url}
-                      </p>
-                    ))}
-                  </div>
+                      <QrCode size={42} />
+                    </div>
+                  )}
+                  <p className="mt-4 text-sm font-semibold text-white">QR do ultimo APK publicado</p>
+                  <p className="mt-2 text-xs leading-5 text-gray-500">
+                    {androidApkInfo?.fileExists
+                      ? 'O APK local ja foi gerado, mas este QR baixa direto o MusFy-Android.apk do latest release no GitHub.'
+                      : 'Ao ler com o celular, o download abre direto no asset MusFy-Android.apk do latest release no GitHub.'}
+                  </p>
                 </div>
-              ) : null}
+              </div>
             </div>
           </div>
-        </div>
       </div>
     </div>
   );
@@ -2794,7 +2797,13 @@ export default function App() {
         <div className="grid w-full max-w-5xl grid-cols-[1.1fr_0.9fr] overflow-hidden rounded-[36px] border border-white/10 bg-black/60 shadow-[0_30px_120px_rgba(0,0,0,0.55)] backdrop-blur-2xl">
           <div className="flex flex-col justify-between border-r border-white/10 bg-[linear-gradient(180deg,rgba(9,30,20,0.92)_0%,rgba(5,5,5,0.92)_100%)] p-10">
             <div>
-              <p className="text-xs uppercase tracking-[0.32em] text-green-400/80">MusFy Desktop</p>
+              <div className="inline-flex items-center gap-4 rounded-full border border-white/10 bg-white/[0.04] px-4 py-3">
+                <img src={brandMark} alt="MusFy" className="h-12 w-12 rounded-2xl" />
+                <div>
+                  <p className="text-xs uppercase tracking-[0.32em] text-green-400/80">MusFy Desktop</p>
+                  <p className="mt-1 text-sm text-gray-400">Player local com cara de produto</p>
+                </div>
+              </div>
               <h1 className="mt-5 text-6xl font-black tracking-tight">Sua musica, sua casa.</h1>
               <p className="mt-5 max-w-xl text-lg leading-8 text-gray-300">
                 Entre com login e senha para abrir a biblioteca do seu usuario, baixar links do YouTube e manter tudo separado por perfil.
@@ -2925,10 +2934,16 @@ export default function App() {
       <div className="flex h-full min-h-0">
         <aside className="hidden h-full w-80 flex-col overflow-y-auto border-r border-white/5 bg-[linear-gradient(180deg,#070707_0%,#0d0d0d_100%)] lg:flex">
           <div className="px-7 pb-6 pt-7">
-            <h1 className="bg-gradient-to-r from-green-400 via-emerald-300 to-teal-500 bg-clip-text text-4xl font-black tracking-tight text-transparent">
-              MUSFY
-            </h1>
-            <p className="mt-2 text-sm text-gray-500">
+            <div className="flex items-center gap-4">
+              <img src={brandMark} alt="MusFy" className="h-16 w-16 rounded-[22px] shadow-[0_10px_35px_rgba(30,215,96,0.16)]" />
+              <div>
+                <h1 className="bg-gradient-to-r from-green-300 via-emerald-200 to-green-500 bg-clip-text text-4xl font-black tracking-tight text-transparent">
+                  MUSFY
+                </h1>
+                <p className="mt-1 text-xs uppercase tracking-[0.24em] text-green-400/70">Desktop Player</p>
+              </div>
+            </div>
+            <p className="mt-4 text-sm text-gray-500">
               Sua sessão, sua biblioteca, seu player.
             </p>
           </div>
@@ -3502,7 +3517,11 @@ export default function App() {
                           <div key={job.id} className="rounded-[20px] border border-white/10 bg-black/20 p-4">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-white">
+                                <p
+                                  className={`text-sm font-semibold text-white ${
+                                    job.status === 'error' ? 'whitespace-pre-wrap break-words leading-5' : 'truncate'
+                                  }`}
+                                >
                                   {job.message || (job.mode === 'playlist' ? 'Playlist em processamento' : 'Faixa em processamento')}
                                 </p>
                                 <p className="mt-1 text-xs text-gray-500">
@@ -3545,6 +3564,12 @@ export default function App() {
                               <span>{job.stage}</span>
                               <span>{Math.round(Number(job.progress || 0))}%</span>
                             </div>
+
+                            {job.status === 'error' && job.message ? (
+                              <p className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs leading-5 text-red-100">
+                                {repairTextEncoding(job.message)}
+                              </p>
+                            ) : null}
 
                             <div className="mt-3 flex flex-wrap gap-2">
                               {job.status === 'running' || job.status === 'queued' ? (
@@ -3774,29 +3799,24 @@ export default function App() {
                 </div>
 
                 <div className="px-8 pb-8">
-                  <div className="grid grid-cols-[56px_minmax(0,1.8fr)_minmax(0,1fr)_180px] items-center gap-4 border-b border-white/6 px-4 py-4 text-xs uppercase tracking-[0.2em] text-gray-500">
-                    <span>#</span>
+                  <div className="grid grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_180px] items-center gap-4 border-b border-white/6 px-4 py-4 text-xs uppercase tracking-[0.2em] text-gray-500">
                     <span>Titulo</span>
                     <span>Origem</span>
                     <span className="text-right">Acoes</span>
                   </div>
 
                   <div className="divide-y divide-white/5">
-                    {filteredSongs.map((song, index) => {
+                    {filteredSongs.map((song) => {
                       const active = currentSong?.id === song.id;
 
                       return (
                         <button
                           key={song.id}
                           onClick={() => void playSong(song)}
-                          className={`grid w-full grid-cols-[56px_minmax(0,1.8fr)_minmax(0,1fr)_180px] items-center gap-4 px-4 py-4 text-left transition ${
+                          className={`grid w-full grid-cols-[minmax(0,1.8fr)_minmax(0,1fr)_180px] items-center gap-4 px-4 py-4 text-left transition ${
                             active ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'
                           }`}
                         >
-                          <div className="flex items-center gap-3 text-gray-400">
-                            <span className="w-5 text-center text-base">{index + 1}</span>
-                          </div>
-
                           <div className="flex min-w-0 items-center gap-4">
                             <div className="h-14 w-14 overflow-hidden rounded-2xl bg-[#1b1b1b]">
                               {song.thumbnail ? (
@@ -4109,7 +4129,7 @@ export default function App() {
               </div>
             ) : (
               <div className="overflow-hidden rounded-3xl border border-white/5 bg-[#0d0d0d]">
-                {filteredSongs.map((song, index) => {
+                {filteredSongs.map((song) => {
                   const active = currentSong?.id === song.id;
 
                   return (
@@ -4119,11 +4139,10 @@ export default function App() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       onClick={() => void playSong(song)}
-                      className={`grid cursor-pointer grid-cols-[50px_1.7fr_1.1fr_130px] gap-4 border-b border-white/5 px-6 py-4 ${
+                      className={`grid cursor-pointer grid-cols-[minmax(0,1.7fr)_minmax(0,1.1fr)_130px] gap-4 border-b border-white/5 px-6 py-4 ${
                         active ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
                       }`}
                     >
-                      <div className="text-gray-500">{index + 1}</div>
                       <div className="flex min-w-0 items-center gap-4">
                         <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl bg-[#1b1b1b]">
                           {song.thumbnail ? (

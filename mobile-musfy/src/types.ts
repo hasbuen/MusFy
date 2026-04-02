@@ -58,10 +58,48 @@ export type HealthStatus = {
   storage?: ServiceStorage | null;
 };
 
+export type DevicePlaybackState = {
+  status?: 'idle' | 'playing' | 'paused' | 'error' | string | null;
+  currentSongId?: string | null;
+  currentSongTitle?: string | null;
+  currentSongArtist?: string | null;
+  isPlaying?: boolean | null;
+  currentTime?: number | null;
+  duration?: number | null;
+  volume?: number | null;
+  errorMessage?: string | null;
+  updatedAt?: string | null;
+  lastUpdateAt?: string | null;
+};
+
+export type DeviceCommand = {
+  commandId: number;
+  payload?: Record<string, unknown> | null;
+  createdAt?: string | null;
+  sourceDeviceId?: string | null;
+  sourceDeviceName?: string | null;
+  sourceIpAddress?: string | null;
+};
+
+export type DeviceSummary = {
+  deviceId: string;
+  deviceName?: string | null;
+  userId?: string | null;
+  userName?: string | null;
+  platform?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  lastSeenAt?: string | null;
+  lastError?: string | null;
+  lastState?: DevicePlaybackState | null;
+};
+
 export type AndroidApkInfo = {
   fileExists?: boolean;
   fileName?: string | null;
   preferredUrl?: string | null;
+  externalUrl?: string | null;
+  releaseUrl?: string | null;
   localUrls?: string[];
   storagePath?: string | null;
 };

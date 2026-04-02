@@ -14,8 +14,10 @@ const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVICE_MODE = process.env.MUSFY_SERVICE_MODE || 'standalone';
-const DEFAULT_ANDROID_APK_URL =
-  'https://expo.dev/accounts/hasbuen/projects/musfy-mobile/builds/765e7519-0487-4a73-badb-403f8500439d';
+const GITHUB_RELEASE_OWNER = 'hasbuen';
+const GITHUB_RELEASE_REPO = 'Projects';
+const DEFAULT_ANDROID_RELEASE_URL = `https://github.com/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPO}/releases/latest`;
+const DEFAULT_ANDROID_APK_URL = `${DEFAULT_ANDROID_RELEASE_URL}/download/MusFy-Android.apk`;
 
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
@@ -64,6 +66,9 @@ app.get('/android/apk-info', (req, res) => {
   const apkPath = resolveAndroidApkPath();
   const fileExists = fs.existsSync(apkPath);
   const localUrls = getLocalServiceBaseUrls(PORT).map((baseUrl) => `${baseUrl}/android/musfy.apk`);
+  const releaseUrl =
+    (process.env.MUSFY_ANDROID_RELEASE_URL ? String(process.env.MUSFY_ANDROID_RELEASE_URL).trim() : '') ||
+    DEFAULT_ANDROID_RELEASE_URL;
   const externalUrl =
     (process.env.MUSFY_ANDROID_APK_URL ? String(process.env.MUSFY_ANDROID_APK_URL).trim() : '') ||
     DEFAULT_ANDROID_APK_URL;
@@ -74,6 +79,7 @@ app.get('/android/apk-info', (req, res) => {
     localUrls,
     preferredUrl: externalUrl || (fileExists ? localUrls[0] || null : null),
     externalUrl,
+    releaseUrl,
     storagePath: fileExists ? apkPath : null
   });
 });
@@ -165,6 +171,18 @@ function getLocalServiceBaseUrls(port = PORT) {
     .map((iface) => `http://${iface.address}:${port}`);
 
   return [...new Set([`http://127.0.0.1:${port}`, ...addresses])];
+}
+
+function getHostLocalNetworkKeys() {
+  return [
+    ...new Set(
+      Object.values(os.networkInterfaces())
+        .flat()
+        .filter((iface) => iface && iface.family === 'IPv4' && !iface.internal)
+        .map((iface) => getLocalNetworkKey(iface.address))
+        .filter(Boolean)
+    )
+  ];
 }
 
 // =============================
@@ -693,21 +711,40 @@ function getLocalNetworkKey(ip) {
   return normalized;
 }
 
+function getReachableNetworkKeys(ip) {
+  const directNetwork = getLocalNetworkKey(ip);
+  const reachableNetworks = new Set();
+
+  if (directNetwork) {
+    reachableNetworks.add(directNetwork);
+  }
+
+  if (directNetwork === 'loopback') {
+    for (const networkKey of getHostLocalNetworkKeys()) {
+      reachableNetworks.add(networkKey);
+    }
+  }
+
+  return reachableNetworks;
+}
+
 function canShareDeviceAcrossContext(requestUserId, requestIpAddress, device) {
   if (!device) return false;
 
-  const requestNetwork = getLocalNetworkKey(requestIpAddress);
-  const deviceNetwork = getLocalNetworkKey(device.ipAddress);
+  const requestNetworks = getReachableNetworkKeys(requestIpAddress);
+  const deviceNetworks = getReachableNetworkKeys(device.ipAddress);
+  const sameNetwork =
+    requestNetworks.size > 0 && [...requestNetworks].some((networkKey) => deviceNetworks.has(networkKey));
 
-  if (!requestNetwork || !deviceNetwork || requestNetwork !== deviceNetwork) {
+  if (!sameNetwork) {
     return false;
   }
 
-  if (!requestUserId) {
-    return !device.userId;
+  if (!requestUserId || !device.userId) {
+    return true;
   }
 
-  return String(device.userId || '') === String(requestUserId);
+  return String(device.userId) === String(requestUserId);
 }
 
 function upsertDevice({ deviceId, deviceName, userId, ipAddress, userAgent, platform }) {
