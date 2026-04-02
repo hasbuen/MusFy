@@ -2,10 +2,10 @@
 
 Desktop player for Windows with local library, YouTube downloads, mini player, tray mode, offline playback, and GitHub-powered updates.
 
-[Baixar a ultima release](https://github.com/hasbuen/Projects/releases/latest)  
-[Abrir landing page](https://hasbuen.github.io/Projects/)  
-[Instalador Windows](https://github.com/hasbuen/Projects/releases/latest/download/MusFy-Setup.exe)  
-[APK Android](https://github.com/hasbuen/Projects/releases/latest/download/MusFy-Android.apk)
+[Baixar a ultima release](https://github.com/hasbuen/MusFy/releases/latest)  
+[Abrir landing page](https://hasbuen.github.io/MusFy/)  
+[Instalador Windows](https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Setup.exe)  
+[APK Android](https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Android.apk)
 
 ## O que o MusFy entrega
 
@@ -34,4 +34,4 @@ MusFy foi pensado para ficar aberto o dia inteiro. A proposta e simples: abrir r
 
 ## Status atual
 
-O repositorio ainda aparece como `Projects` no GitHub por falta de permissao administrativa no token usado para automacao, mas a marca, o app e a landing page ja estao alinhados como MusFy.
+O repositorio publico, o app, a landing page e os releases ficam alinhados sob a marca MusFy.

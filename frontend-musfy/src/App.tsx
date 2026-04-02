@@ -222,7 +222,7 @@ interface DownloadJob {
   items?: DownloadJobItem[];
 }
 
-const GITHUB_RELEASES_LATEST_URL = 'https://github.com/hasbuen/Projects/releases/latest';
+const GITHUB_RELEASES_LATEST_URL = 'https://github.com/hasbuen/MusFy/releases/latest';
 const GITHUB_ANDROID_APK_URL = `${GITHUB_RELEASES_LATEST_URL}/download/MusFy-Android.apk`;
 const GITHUB_ANDROID_APK_ASSET_NAME = 'MusFy-Android.apk';
 

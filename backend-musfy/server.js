@@ -15,7 +15,7 @@ const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVICE_MODE = process.env.MUSFY_SERVICE_MODE || 'standalone';
 const GITHUB_RELEASE_OWNER = 'hasbuen';
-const GITHUB_RELEASE_REPO = 'Projects';
+const GITHUB_RELEASE_REPO = 'MusFy';
 const DEFAULT_ANDROID_RELEASE_URL = `https://github.com/${GITHUB_RELEASE_OWNER}/${GITHUB_RELEASE_REPO}/releases/latest`;
 const DEFAULT_ANDROID_APK_URL = `${DEFAULT_ANDROID_RELEASE_URL}/download/MusFy-Android.apk`;
 

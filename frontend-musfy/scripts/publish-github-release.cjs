@@ -3,7 +3,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const DEFAULT_GITHUB_OWNER = 'hasbuen';
-const DEFAULT_GITHUB_REPO = 'Projects';
+const DEFAULT_GITHUB_REPO = 'MusFy';
 const REQUIRED_ARTIFACTS = ['latest.yml', 'MusFy-Setup.exe', 'MusFy-Setup.exe.blockmap'];
 const DEFAULT_ANDROID_APK_ASSET_NAME = 'MusFy-Android.apk';
 const DEFAULT_GITHUB_MAX_ATTEMPTS = 4;
