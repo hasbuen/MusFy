@@ -3,7 +3,7 @@
     "name": "MusFy",
     "slug": "musfy-mobile",
     "scheme": "musfy",
-    "version": "0.1.15",
+    "version": "0.1.16",
     "icon": "./assets/branding/musfy-play.png",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.musfy.mobile",
-      "versionCode": 15,
+      "versionCode": 16,
       "adaptiveIcon": {
         "foregroundImage": "./assets/branding/musfy-play.png",
         "backgroundColor": "#0b0c0e"

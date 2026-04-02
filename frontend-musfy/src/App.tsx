@@ -1,7 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import QRCode from 'qrcode';
 import { AnimatePresence, motion } from 'framer-motion';
-import localforage from 'localforage';
+import { Suspense, lazy } from 'react';
 import {
   Check,
   Compass,
@@ -40,6 +39,7 @@ import {
 } from 'lucide-react';
 import api from './services/api';
 import brandMark from './assets/musfy-mark.svg';
+import type { DesktopOnboardingStep } from './components/DesktopOnboardingOverlay';
 
 interface Song {
   id: string;
@@ -270,13 +270,88 @@ type PlayerCommand =
 
 const isMiniMode = new URLSearchParams(window.location.search).get('mini') === '1';
 const channel = new BroadcastChannel('musfy-player');
-const offlineAudioStore = localforage.createInstance({
-  name: 'musfy-offline',
-  storeName: 'audio_cache'
-});
+const DesktopOnboardingOverlay = lazy(() => import('./components/DesktopOnboardingOverlay'));
 const AUTH_STORAGE_KEY = 'musfy-current-user';
 const DEVICE_ID_STORAGE_KEY = 'musfy-device-id';
 const DEVICE_NAME_STORAGE_KEY = 'musfy-device-name';
+const DESKTOP_ONBOARDING_STORAGE_KEY = 'musfy-desktop-onboarding-v1';
+
+type LocalForageModule = typeof import('localforage');
+let qrCodeModulePromise: Promise<typeof import('qrcode')> | null = null;
+let localForageModulePromise: Promise<LocalForageModule> | null = null;
+let offlineAudioStorePromise: Promise<ReturnType<LocalForageModule['createInstance']>> | null = null;
+
+const DESKTOP_ONBOARDING_STEPS: DesktopOnboardingStep[] = [
+  {
+    id: 'nav-download',
+    title: 'Entrada de captura',
+    description: 'O MusFy já pode abrir direto em downloads. Esse atalho concentra busca no YouTube, fila e publicação no catálogo.',
+    accent: 'Use a seção "Baixar do YouTube" como ponto de entrada para novas faixas.'
+  },
+  {
+    id: 'search',
+    title: 'Busca global',
+    description: 'A busca principal filtra música, artista e playlist sem sair da tela atual, mantendo a navegação leve.',
+    accent: 'Pesquise localmente antes de trocar de seção.'
+  },
+  {
+    id: 'youtube-search',
+    title: 'Busca integrada no YouTube',
+    description: 'A seção de downloads resolve pesquisa e seleção dentro do app, reduzindo ida e volta entre navegador e player.',
+    accent: 'Busque, analise e publique faixas sem sair do MusFy.'
+  },
+  {
+    id: 'mini-player',
+    title: 'Mini player e bandeja',
+    description: 'O desktop pode ir para mini player ou bandeja sem interromper a sessão, o que melhora uso contínuo em segundo plano.',
+    accent: 'Esses controles ficam sempre acessíveis no topo.'
+  },
+  {
+    id: 'apk-release',
+    title: 'Distribuição do APK',
+    description: 'O QR e o botão manual apontam para o latest release no GitHub. Isso evita link quebrado e simplifica demonstração para Android.',
+    accent: 'Use a área de APK nas configurações para compartilhar a versão mais nova.'
+  }
+];
+
+function loadQrCodeModule() {
+  if (!qrCodeModulePromise) {
+    qrCodeModulePromise = import('qrcode');
+  }
+
+  return qrCodeModulePromise;
+}
+
+function loadLocalForageModule() {
+  if (!localForageModulePromise) {
+    localForageModulePromise = import('localforage');
+  }
+
+  return localForageModulePromise;
+}
+
+function getOfflineAudioStore() {
+  if (!offlineAudioStorePromise) {
+    offlineAudioStorePromise = loadLocalForageModule().then((localforage) =>
+      localforage.createInstance({
+        name: 'musfy-offline',
+        storeName: 'audio_cache'
+      })
+    );
+  }
+
+  return offlineAudioStorePromise;
+}
+
+function runWhenIdle(callback: () => void) {
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    const handle = window.requestIdleCallback(callback, { timeout: 1200 });
+    return () => window.cancelIdleCallback(handle);
+  }
+
+  const handle = globalThis.setTimeout(callback, 240);
+  return () => globalThis.clearTimeout(handle);
+}
 
 function looksLikeMojibake(value: string) {
   return /(?:Ã.|Â.|�)/.test(value);
@@ -582,6 +657,11 @@ export default function App() {
     releaseDate: null,
     releaseUrl: null
   });
+  const [hasSeenDesktopOnboarding, setHasSeenDesktopOnboarding] = useState(
+    () => localStorage.getItem(DESKTOP_ONBOARDING_STORAGE_KEY) === 'done'
+  );
+  const [isDesktopOnboardingOpen, setIsDesktopOnboardingOpen] = useState(false);
+  const [desktopOnboardingStepIndex, setDesktopOnboardingStepIndex] = useState(0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -660,6 +740,23 @@ export default function App() {
       localStorage.removeItem(AUTH_STORAGE_KEY);
     }
   };
+  const activeDesktopOnboardingStep = isDesktopOnboardingOpen
+    ? DESKTOP_ONBOARDING_STEPS[desktopOnboardingStepIndex] || null
+    : null;
+  const activeDesktopOnboardingStepId = activeDesktopOnboardingStep?.id || null;
+
+  const closeDesktopOnboarding = (completed = false) => {
+    setIsDesktopOnboardingOpen(false);
+    if (completed) {
+      setHasSeenDesktopOnboarding(true);
+      localStorage.setItem(DESKTOP_ONBOARDING_STORAGE_KEY, 'done');
+    }
+  };
+
+  const openDesktopOnboarding = (stepIndex = 0) => {
+    setDesktopOnboardingStepIndex(stepIndex);
+    setIsDesktopOnboardingOpen(true);
+  };
 
   const loadSongs = async (section = activeSection, user = currentUser) => {
     const res = await api.get('/enviar-musica', {
@@ -735,11 +832,12 @@ export default function App() {
   };
 
   const loadOfflineIndex = async () => {
-    const keys = await offlineAudioStore.keys();
+    const store = await getOfflineAudioStore();
+    const keys = await store.keys();
     const ids = keys
-      .map((key) => String(key))
-      .filter((key) => key.startsWith('audio:'))
-      .map((key) => key.slice('audio:'.length));
+      .map((key: string | number) => String(key))
+      .filter((key: string) => key.startsWith('audio:'))
+      .map((key: string) => key.slice('audio:'.length));
     setOfflineSongIds(ids);
   };
 
@@ -755,7 +853,8 @@ export default function App() {
 
   const getPlaybackUrl = async (song: Song, mode: PlaybackMode) => {
     if (mode === 'audio') {
-      const offline = await offlineAudioStore.getItem<OfflineAudioRecord>(getOfflineAudioKey(song.id));
+      const store = await getOfflineAudioStore();
+      const offline = await store.getItem<OfflineAudioRecord>(getOfflineAudioKey(song.id));
       if (offline?.blob) {
         releaseObjectUrl();
         objectUrlRef.current = URL.createObjectURL(offline.blob);
@@ -904,15 +1003,43 @@ export default function App() {
   }, [activeSection, currentUser, isMiniMode, backendAvailable]);
 
   useEffect(() => {
-    loadOfflineIndex().catch(console.error);
+    const cancelIdle = runWhenIdle(() => {
+      void loadOfflineIndex().catch(console.error);
+    });
     setIsVideoTheaterOpen(false);
     setIsVideoPanelOpen(false);
     setShowVideoInMiniPlayer(false);
 
     return () => {
+      cancelIdle();
       releaseObjectUrl();
     };
   }, []);
+
+  useEffect(() => {
+    if (!currentUser || isMiniMode || hasSeenDesktopOnboarding || isDesktopOnboardingOpen) return;
+    const timer = window.setTimeout(() => {
+      openDesktopOnboarding(0);
+    }, 720);
+    return () => window.clearTimeout(timer);
+  }, [currentUser, hasSeenDesktopOnboarding, isDesktopOnboardingOpen]);
+
+  useEffect(() => {
+    if (!activeDesktopOnboardingStep || isMiniMode) return;
+
+    if (activeDesktopOnboardingStep.id === 'nav-download' && activeSection !== 'download') {
+      setActivePlaylistId(null);
+      setActiveDiscoverPlaylistId(null);
+      setActiveSection('download');
+      return;
+    }
+
+    if (activeDesktopOnboardingStep.id === 'apk-release' && activeSection !== 'settings') {
+      setActivePlaylistId(null);
+      setActiveDiscoverPlaylistId(null);
+      setActiveSection('settings');
+    }
+  }, [activeDesktopOnboardingStep, activeSection, isMiniMode]);
 
   useEffect(() => {
     if (!isMiniMode && currentUser && backendAvailable) {
@@ -1116,15 +1243,18 @@ export default function App() {
       return;
     }
 
-    QRCode.toDataURL(resolvedAndroidApkUrl, {
-      width: 240,
-      margin: 1,
-      color: {
-        dark: '#050505',
-        light: '#0000'
-      }
-    })
-      .then((dataUrl: string) => setApkQrCodeDataUrl(dataUrl))
+    loadQrCodeModule()
+      .then((QRCode) =>
+        QRCode.toDataURL(resolvedAndroidApkUrl, {
+          width: 240,
+          margin: 1,
+          color: {
+            dark: '#050505',
+            light: '#0000'
+          }
+        })
+      )
+      .then((dataUrl) => setApkQrCodeDataUrl(dataUrl))
       .catch(() => setApkQrCodeDataUrl(''));
   }, [resolvedAndroidApkUrl]);
 
@@ -1293,6 +1423,7 @@ export default function App() {
   const updateHeadline =
     desktopUpdateStatus.releaseName ||
     (desktopUpdateStatus.availableVersion ? `MusFy ${desktopUpdateStatus.availableVersion}` : 'Atualizacao do MusFy');
+  const desktopTourFocusClass = 'border-cyan-300/45 bg-cyan-300/[0.08] shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_20px_60px_rgba(8,145,178,0.12)]';
 
   const settingsContent = (
     <div className="space-y-6">
@@ -1307,6 +1438,14 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => openDesktopOnboarding(0)}
+              className="rounded-[20px] border border-cyan-400/25 bg-cyan-400/10 px-4 py-3 text-left transition hover:border-cyan-300/40 hover:bg-cyan-400/16"
+            >
+              <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-100/80">Tutorial</p>
+              <p className="mt-1 text-sm font-semibold text-white">Revisar fluxo guiado</p>
+            </button>
             <div className="rounded-[20px] border border-white/10 bg-white/[0.04] px-4 py-3">
               <p className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Splash</p>
               <p className="mt-1 text-sm font-semibold text-white">{desktopPreferences.showSplash ? 'Ligada' : 'Desligada'}</p>
@@ -1581,7 +1720,11 @@ export default function App() {
               </div>
 
               <div className="mt-6 space-y-4">
-                <div className="rounded-[24px] border border-white/10 bg-black/20 p-4">
+                <div
+                  className={`rounded-[24px] border border-white/10 bg-black/20 p-4 ${
+                    activeDesktopOnboardingStepId === 'apk-release' ? desktopTourFocusClass : ''
+                  }`}
+                >
                   <p className="text-xs uppercase tracking-[0.22em] text-gray-500">Release do APK</p>
                   <button
                     type="button"
@@ -2389,7 +2532,8 @@ export default function App() {
         savedAt: new Date().toISOString()
       };
 
-      await offlineAudioStore.setItem(getOfflineAudioKey(song.id), record);
+      const store = await getOfflineAudioStore();
+      await store.setItem(getOfflineAudioKey(song.id), record);
       await loadOfflineIndex();
       if (currentSong?.id === song.id) {
         setPlayerNotice('');
@@ -2407,7 +2551,8 @@ export default function App() {
 
     setOfflineBusyIds((prev) => [...prev, song.id]);
     try {
-      await offlineAudioStore.removeItem(getOfflineAudioKey(song.id));
+      const store = await getOfflineAudioStore();
+      await store.removeItem(getOfflineAudioKey(song.id));
       const isCurrentOfflineBlob =
         currentSong?.id === song.id &&
         playbackModeRef.current === 'audio' &&
@@ -2965,6 +3110,10 @@ export default function App() {
                       active
                         ? 'bg-white text-black shadow-[0_10px_30px_rgba(255,255,255,0.12)]'
                         : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                    } ${
+                      activeDesktopOnboardingStepId === 'nav-download' && item.id === 'download'
+                        ? desktopTourFocusClass
+                        : ''
                     }`}
                   >
                     <item.icon size={19} />
@@ -3128,7 +3277,7 @@ export default function App() {
                 activeSection === 'settings'
                   ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-50 shadow-[0_16px_40px_rgba(34,211,238,0.12)]'
                   : 'border-white/10 bg-white/[0.03] text-gray-300 hover:border-white/15 hover:bg-white/[0.05] hover:text-white'
-              }`}
+              } ${activeDesktopOnboardingStepId === 'apk-release' ? desktopTourFocusClass : ''}`}
             >
               <Settings2 size={18} />
               <div>
@@ -3161,7 +3310,7 @@ export default function App() {
           <header className="border-b border-white/5 bg-black/50 px-8 py-6 backdrop-blur-2xl">
             <div className="flex items-start justify-between gap-6">
               <div className="flex flex-1 flex-col gap-4">
-                <div className="relative max-w-xl">
+                <div className={`relative max-w-xl rounded-full ${activeDesktopOnboardingStepId === 'search' ? desktopTourFocusClass : ''}`}>
                   <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
                   <input
                     value={searchTerm}
@@ -3216,13 +3365,24 @@ export default function App() {
                 ) : null}
 
                 <button
+                  onClick={() => openDesktopOnboarding(0)}
+                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                  className="flex h-12 items-center gap-2 rounded-full border border-cyan-400/25 bg-cyan-400/10 px-4 text-cyan-50 hover:bg-cyan-400/16"
+                >
+                  <Sparkles size={16} />
+                  Tutorial
+                </button>
+
+                <button
                   onClick={() =>
                     void showDesktopMiniPlayer(
                       currentSong?.hasVideo && playbackMode === 'video' ? 'video' : 'compact'
                     )
                   }
                   style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-                  className="flex h-12 items-center gap-2 rounded-full border border-white/10 bg-[#101010] px-4 hover:bg-white/5"
+                  className={`flex h-12 items-center gap-2 rounded-full border border-white/10 bg-[#101010] px-4 hover:bg-white/5 ${
+                    activeDesktopOnboardingStepId === 'mini-player' ? desktopTourFocusClass : ''
+                  }`}
                 >
                   <MonitorSpeaker size={16} />
                   Mini Player
@@ -3272,7 +3432,11 @@ export default function App() {
                     </p>
                   </div>
 
-                  <div className="mt-8 rounded-[28px] border border-cyan-400/20 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.16),transparent_40%),rgba(0,0,0,0.28)] p-5">
+                  <div
+                    className={`mt-8 rounded-[28px] border border-cyan-400/20 bg-[radial-gradient(circle_at_top_right,rgba(56,189,248,0.16),transparent_40%),rgba(0,0,0,0.28)] p-5 ${
+                      activeDesktopOnboardingStepId === 'youtube-search' ? desktopTourFocusClass : ''
+                    }`}
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">Busca integrada</p>
@@ -4950,6 +5114,24 @@ export default function App() {
           />
         </div>
       </footer>
+      {isDesktopOnboardingOpen && activeDesktopOnboardingStep ? (
+        <Suspense fallback={null}>
+          <DesktopOnboardingOverlay
+            step={activeDesktopOnboardingStep}
+            stepIndex={desktopOnboardingStepIndex}
+            totalSteps={DESKTOP_ONBOARDING_STEPS.length}
+            onBack={() => setDesktopOnboardingStepIndex((current) => Math.max(0, current - 1))}
+            onNext={() => {
+              if (desktopOnboardingStepIndex >= DESKTOP_ONBOARDING_STEPS.length - 1) {
+                closeDesktopOnboarding(true);
+                return;
+              }
+              setDesktopOnboardingStepIndex((current) => Math.min(DESKTOP_ONBOARDING_STEPS.length - 1, current + 1));
+            }}
+            onClose={closeDesktopOnboarding}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

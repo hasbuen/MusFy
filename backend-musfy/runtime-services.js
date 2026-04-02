@@ -3,7 +3,16 @@ const path = require('path');
 const net = require('net');
 const tls = require('tls');
 const { spawn } = require('child_process');
-const initSqlJs = require('sql.js');
+
+let sqlJsModulePromise = null;
+
+function loadSqlJsModule() {
+  if (!sqlJsModulePromise) {
+    sqlJsModulePromise = Promise.resolve().then(() => require('sql.js'));
+  }
+
+  return sqlJsModulePromise;
+}
 
 function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
   const sqliteDbPath = path.join(dataDir, 'musfy.sqlite');
@@ -140,9 +149,12 @@ function createRuntimeServices({ runtimeRootDir, dataDir, emitLog }) {
     }
 
     if (!sqliteInitPromise) {
-      sqliteInitPromise = initSqlJs({
-        locateFile: () => resolveSqliteWasmPath()
-      })
+      sqliteInitPromise = loadSqlJsModule()
+        .then((initSqlJs) =>
+          initSqlJs({
+            locateFile: () => resolveSqliteWasmPath()
+          })
+        )
         .then((SQL) => {
           sqliteModule = SQL;
           const initialBuffer = fs.existsSync(sqliteDbPath) ? fs.readFileSync(sqliteDbPath) : null;

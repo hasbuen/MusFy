@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   type GestureResponderEvent,
@@ -32,6 +32,7 @@ import {
   Server,
   SkipBack,
   SkipForward,
+  Sparkles,
   Smartphone,
   Speaker,
   UserRound,
@@ -54,6 +55,7 @@ import {
   toggleFavorite
 } from './src/api/client';
 import type { DeviceCommand, DeviceSummary, HealthStatus, OfflineTrack, Playlist, Song, User } from './src/types';
+import type { MobileOnboardingStep } from './src/components/MobileOnboardingOverlay';
 
 type AudioPlayer = import('expo-audio').AudioPlayer;
 type AudioStatus = import('expo-audio').AudioStatus;
@@ -74,7 +76,8 @@ const SETTINGS = {
   user: 'mobile.user',
   deviceId: 'mobile.deviceId',
   lastLogin: 'mobile.lastLogin',
-  outputDeviceId: 'mobile.outputDeviceId'
+  outputDeviceId: 'mobile.outputDeviceId',
+  onboardingSeen: 'mobile.onboardingSeen'
 } as const;
 const VIEW_META: Record<ViewMode, { label: string; icon: IconComponent }> = {
   library: { label: 'Biblioteca', icon: Library },
@@ -82,6 +85,45 @@ const VIEW_META: Record<ViewMode, { label: string; icon: IconComponent }> = {
   playlists: { label: 'Playlists', icon: ListMusic },
   offline: { label: 'Offline', icon: Download }
 };
+const MobileOnboardingOverlay = lazy(() => import('./src/components/MobileOnboardingOverlay'));
+const MOBILE_ONBOARDING_STEPS: MobileOnboardingStep[] = [
+  {
+    id: 'header',
+    title: 'Acesso rápido',
+    description: 'No topo ficam atualização manual, tutorial e saída da sessão. É o ponto de controle mais rápido do app.',
+    accent: 'Atualize o catálogo e reabra o guia sem sair da tela principal.'
+  },
+  {
+    id: 'player',
+    title: 'Player central',
+    description: 'Aqui você acompanha a faixa atual, controla reprodução e baixa áudio para o modo offline quando precisar.',
+    accent: 'O bloco central concentra reprodução e ação offline.'
+  },
+  {
+    id: 'output',
+    title: 'Saída remota',
+    description: 'O MusFy também pode enviar comandos para outros dispositivos ativos da rede local, mantendo o celular como controle.',
+    accent: 'Troque entre este celular e outros players conectados.'
+  },
+  {
+    id: 'search',
+    title: 'Busca local',
+    description: 'A busca filtra a biblioteca atual imediatamente, sem round-trip no servidor, o que deixa a navegação mais rápida.',
+    accent: 'Use a barra para reduzir a lista antes de tocar.'
+  },
+  {
+    id: 'views',
+    title: 'Modos de biblioteca',
+    description: 'Biblioteca, favoritas, playlists e offline ficam separados para reduzir ruído e facilitar o acesso ao que importa.',
+    accent: 'Troque o contexto sem sair da mesma interface.'
+  },
+  {
+    id: 'offline',
+    title: 'Offline sob demanda',
+    description: 'A lista offline agora é carregada só quando você precisa, reduzindo trabalho no boot inicial do aplicativo.',
+    accent: 'Entre em Offline para hidratar o cache local apenas quando fizer sentido.'
+  }
+];
 
 let audioModulePromise: Promise<AudioModule> | null = null;
 let databaseModulePromise: Promise<DatabaseModule> | null = null;
@@ -185,6 +227,10 @@ function MusFyApp() {
   const [durationMs, setDurationMs] = useState(0);
   const [playbackQueue, setPlaybackQueue] = useState<QueueEntry[]>([]);
   const [capabilities, setCapabilities] = useState({ audio: true, storage: true });
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
+  const [offlineLibraryHydrated, setOfflineLibraryHydrated] = useState(false);
   const normalized = normalizeBaseUrl(baseUrl);
   const currentUserId = currentUser?.id || null;
   const localDeviceName = Platform.OS === 'android' ? 'MusFy Android' : 'MusFy';
@@ -203,6 +249,8 @@ function MusFyApp() {
   const outputDevices = useMemo(() => [{ deviceId, deviceName: 'Este celular', platform: Platform.OS, lastState: null } as DeviceSummary, ...devices].filter((device) => Boolean(device.deviceId)).reduce<DeviceSummary[]>((acc, device) => { if (!acc.some((item) => item.deviceId === device.deviceId)) acc.push(device); return acc; }, []), [deviceId, devices]);
   const selectedOutputDevice = outputDevices.find((device) => device.deviceId === selectedOutputDeviceId) || outputDevices[0] || null;
   const remoteSelected = Boolean(selectedOutputDeviceId && selectedOutputDeviceId !== deviceId);
+  const activeOnboardingStep = isOnboardingOpen ? MOBILE_ONBOARDING_STEPS[onboardingStepIndex] || null : null;
+  const activeOnboardingStepId = activeOnboardingStep?.id || null;
   const currentPlaybackSong = useMemo(() => {
     if (!currentId) return null;
     const onlineSong = songs.find((song) => song.id === currentId) || (selectedPlaylist?.songs || []).find((song) => song.id === currentId);
@@ -213,6 +261,19 @@ function MusFyApp() {
   const canSkipPrevious = playbackQueue.length > 0 ? currentQueueIndex > 0 : currentTrackIndex > 0;
   const canSkipNext = playbackQueue.length > 0 ? currentQueueIndex >= 0 && currentQueueIndex < playbackQueue.length - 1 : currentTrackIndex >= 0 && (activeView === 'offline' ? currentTrackIndex < visibleOfflineTracks.length - 1 : currentTrackIndex < visibleTracks.length - 1);
 
+  function closeOnboarding(completed = false) {
+    setIsOnboardingOpen(false);
+    if (completed) {
+      setHasSeenOnboarding(true);
+      void safeSetSetting(SETTINGS.onboardingSeen, 'done');
+    }
+  }
+
+  function openOnboarding(stepIndex = 0) {
+    setOnboardingStepIndex(stepIndex);
+    setIsOnboardingOpen(true);
+  }
+
   useEffect(() => { playbackQueueRef.current = playbackQueue; }, [playbackQueue]);
   useEffect(() => { currentIdRef.current = currentId; }, [currentId]);
 
@@ -220,14 +281,17 @@ function MusFyApp() {
   function updateCurrentSong(song: Song, target: PlaybackTarget) { setCurrentId(song.id); setCurrentTitle(song.title); setCurrentArtist(song.artist || ''); setCurrentThumbnail(song.thumbnail || null); setPlaybackTarget(target); if (target === 'remote') { setPositionMs(0); setDurationMs(0); setIsPlaying(true); } }
   function syncLockScreenForSong(player: AudioPlayer | null, song: Song | null) { if (!player || !song) return; player.setActiveForLockScreen(true, buildLockScreenMetadata(song)); }
   async function persistUser(next: User | null) { await safeSetSetting(SETTINGS.user, next ? JSON.stringify(next) : ''); setCurrentUser(next); }
-  async function refreshOfflineLibrary() { setOfflineTracks(await safeListOfflineTracks()); }
+  async function refreshOfflineLibrary() {
+    setOfflineTracks(await safeListOfflineTracks());
+    setOfflineLibraryHydrated(true);
+  }
 
   async function bootstrap() {
     setBooting(true);
     try {
       const [storageReady, audioReady] = await Promise.allSettled([safeInitDatabase(), trySetAudioMode()]);
       setCapabilities({ audio: audioReady.status === 'fulfilled', storage: storageReady.status === 'fulfilled' ? storageReady.value : false });
-      const [storedBaseUrl, storedUser, storedDeviceId, storedLastLogin, storedOutputDeviceId, cachedSongs, cachedPlaylists, cachedOfflineTracks] = await Promise.all([safeGetSetting(SETTINGS.baseUrl), safeGetSetting(SETTINGS.user), safeGetSetting(SETTINGS.deviceId), safeGetSetting(SETTINGS.lastLogin), safeGetSetting(SETTINGS.outputDeviceId), safeGetCachedSongs(), safeGetCachedPlaylists(), safeListOfflineTracks()]);
+      const [storedBaseUrl, storedUser, storedDeviceId, storedLastLogin, storedOutputDeviceId, storedOnboardingSeen, cachedSongs, cachedPlaylists] = await Promise.all([safeGetSetting(SETTINGS.baseUrl), safeGetSetting(SETTINGS.user), safeGetSetting(SETTINGS.deviceId), safeGetSetting(SETTINGS.lastLogin), safeGetSetting(SETTINGS.outputDeviceId), safeGetSetting(SETTINGS.onboardingSeen), safeGetCachedSongs(), safeGetCachedPlaylists()]);
       const nextDeviceId = storedDeviceId || id();
       const nextBaseUrl = normalizeBaseUrl(storedBaseUrl || '');
       const nextUser = parseUser(storedUser);
@@ -238,9 +302,11 @@ function MusFyApp() {
       setCurrentUser(nextUser);
       setUsernameInput(storedLastLogin || nextUser?.email || '');
       setSelectedOutputDeviceId(storedOutputDeviceId || nextDeviceId);
+      setHasSeenOnboarding(storedOnboardingSeen === 'done');
       setSongs(cachedSongs.filter(isAudioFocusedSong));
       setPlaylists(cachedPlaylists);
-      setOfflineTracks(cachedOfflineTracks);
+      setOfflineTracks([]);
+      setOfflineLibraryHydrated(false);
       setSelectedPlaylistId(cachedPlaylists[0]?.id || null);
       if (audioReady.status === 'rejected') toast('error', 'Audio nativo indisponivel nesta instalacao.');
       else if (storageReady.status === 'fulfilled' && !storageReady.value) toast('info', 'Cache local ativo em modo temporario.');
@@ -288,6 +354,21 @@ function MusFyApp() {
   useEffect(() => { if (booting || !normalized || !currentUser || activeView === 'playlists' || activeView === 'offline') return; void syncSongs(); }, [booting, normalized, activeView, currentUser, currentUserId]);
   useEffect(() => { if (booting || !normalized || !currentUser) return; void syncPlaylists(); }, [booting, normalized, currentUser, currentUserId]);
   useEffect(() => {
+    if (booting || !currentUser || activeView !== 'offline' || offlineLibraryHydrated) return;
+    void refreshOfflineLibrary().then(() => setOfflineLibraryHydrated(true));
+  }, [activeView, booting, currentUser, offlineLibraryHydrated]);
+  useEffect(() => {
+    if (booting || showSplash || !currentUser || hasSeenOnboarding || isOnboardingOpen) return;
+    const timer = setTimeout(() => openOnboarding(0), 650);
+    return () => clearTimeout(timer);
+  }, [booting, currentUser, hasSeenOnboarding, isOnboardingOpen, showSplash]);
+  useEffect(() => {
+    if (!activeOnboardingStep) return;
+    if (activeOnboardingStep.id === 'offline' && activeView !== 'offline') {
+      setActiveView('offline');
+    }
+  }, [activeOnboardingStep, activeView]);
+  useEffect(() => {
     if (booting || currentUser) return;
     const probeUrl = normalizeBaseUrl(serverInput);
     if (!probeUrl) {
@@ -313,7 +394,13 @@ function MusFyApp() {
 
   async function refreshAll() {
     setRefreshing(true);
-    await Promise.allSettled([syncHealth(normalized, currentUserId, true), syncDevices(normalized, currentUserId, true), currentUser ? syncPlaylists(normalized, currentUserId, true) : Promise.resolve(), currentUser ? syncSongs(activeView, normalized, currentUserId, true) : Promise.resolve(), refreshOfflineLibrary()]);
+    await Promise.allSettled([
+      syncHealth(normalized, currentUserId, true),
+      syncDevices(normalized, currentUserId, true),
+      currentUser ? syncPlaylists(normalized, currentUserId, true) : Promise.resolve(),
+      currentUser ? syncSongs(activeView, normalized, currentUserId, true) : Promise.resolve(),
+      activeView === 'offline' || offlineLibraryHydrated ? refreshOfflineLibrary() : Promise.resolve()
+    ]);
     setRefreshing(false);
   }
 
@@ -329,13 +416,18 @@ function MusFyApp() {
       setServerInput(nextBaseUrl);
       await persistUser(nextUser);
       setPasswordInput('');
-      await Promise.allSettled([syncHealth(nextBaseUrl, nextUser.id, false), syncDevices(nextBaseUrl, nextUser.id, true), syncSongs('library', nextBaseUrl, nextUser.id, true), syncPlaylists(nextBaseUrl, nextUser.id, true), refreshOfflineLibrary()]);
+      await Promise.allSettled([
+        syncHealth(nextBaseUrl, nextUser.id, false),
+        syncDevices(nextBaseUrl, nextUser.id, true),
+        syncSongs('library', nextBaseUrl, nextUser.id, true),
+        syncPlaylists(nextBaseUrl, nextUser.id, true)
+      ]);
       setActiveView('library');
       toast('success', 'MusFy conectado.');
     } catch (error) { toast('error', err(error, 'Falha ao entrar.')); } finally { setAuthBusy(false); }
   }
 
-  async function logout() { playbackRequestRef.current += 1; await unloadLocalPlayer(); await persistUser(null); setSongs([]); setPlaylists([]); setDevices([]); setHealth(null); setSelectedPlaylistId(null); setSelectedOutputDeviceId(deviceId); toast('info', 'Sessao encerrada.'); }
+  async function logout() { playbackRequestRef.current += 1; await unloadLocalPlayer(); await persistUser(null); setSongs([]); setPlaylists([]); setOfflineTracks([]); setOfflineLibraryHydrated(false); setDevices([]); setHealth(null); setSelectedPlaylistId(null); setSelectedOutputDeviceId(deviceId); toast('info', 'Sessao encerrada.'); }
   function onStatus(status: AudioStatus) {
     if (!status.isLoaded) return;
     setIsPlaying(status.playing);
@@ -580,7 +672,7 @@ function MusFyApp() {
   }
 
   function renderHeader() {
-    return <View style={styles.headerRow}><View style={styles.headerBrand}><MusFyLogo size={48} /><View><Text style={styles.headerTitle}>MusFy</Text><Text style={styles.headerMeta}>{health?.ready ? 'Servidor online' : 'Modo cache / offline'}</Text></View></View><View style={styles.headerActions}><IconButton icon={RefreshCw} kind="soft" onPress={() => void refreshAll()} /><IconButton icon={LogOut} onPress={() => void logout()} /></View></View>;
+    return <View style={[styles.headerRow, activeOnboardingStepId === 'header' && styles.tourHighlight]}><View style={styles.headerBrand}><MusFyLogo size={48} /><View><Text style={styles.headerTitle}>MusFy</Text><Text style={styles.headerMeta}>{health?.ready ? 'Servidor online' : 'Modo cache / offline'}</Text></View></View><View style={styles.headerActions}><IconButton icon={Sparkles} kind="soft" onPress={() => openOnboarding(0)} /><IconButton icon={RefreshCw} kind="soft" onPress={() => void refreshAll()} /><IconButton icon={LogOut} onPress={() => void logout()} /></View></View>;
   }
 
   function renderPlayer() {
@@ -589,7 +681,7 @@ function MusFyApp() {
     const shownArtist = remoteSelected && remoteState?.currentSongArtist ? remoteState.currentSongArtist : currentArtist || (currentUser?.nome || 'MusFy');
     const shownStatus = remoteSelected ? remoteState?.status || 'ativo' : playbackTarget === 'remote' ? 'enviado' : isPlaying ? 'tocando' : 'pronto';
     const progress = durationMs > 0 ? Math.min(1, positionMs / durationMs) : 0;
-    return <View style={styles.playerShell}><LinearGradient colors={['#181a1f', '#111318']} style={styles.playerCard}><View style={styles.playerTop}><Artwork uri={currentThumbnail} size={112} radius={26} /><View style={styles.playerBody}><View style={styles.playerBadgeRow}><View style={styles.playerBadge}><Speaker size={12} color="#d8dde2" strokeWidth={2.4} /><Text style={styles.playerBadgeText}>{selectedOutputDevice?.deviceName || 'Este celular'}</Text></View><View style={styles.playerBadge}><Text style={styles.playerBadgeText}>{shownStatus}</Text></View>{playbackQueue.length > 1 ? <View style={styles.playerBadge}><Text style={styles.playerBadgeText}>lista ativa</Text></View> : null}</View><Text numberOfLines={2} style={styles.playerTitle}>{shownTitle}</Text><Text numberOfLines={1} style={styles.playerArtist}>{shownArtist}</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.max(5, progress * 100)}%` }]} /></View><View style={styles.progressMetaRow}><Text style={styles.progressMeta}>{remoteSelected ? (remoteState?.status || 'remoto') : formatTime(positionMs)}</Text><Text style={styles.progressMeta}>{remoteSelected ? 'rede local' : formatTime(durationMs)}</Text></View></View></View><View style={styles.controlsRow}><IconButton icon={SkipBack} onPress={() => void playAdjacent(-1)} disabled={!canSkipPrevious} /><IconButton icon={isPlaying && playbackTarget !== 'remote' ? Pause : Play} kind="primary" onPress={() => void togglePlayback()} disabled={(!currentId && playbackTarget === 'local') || playerBusy} busy={playerBusy} /><IconButton icon={SkipForward} onPress={() => void playAdjacent(1)} disabled={!canSkipNext} />{currentPlaybackSong ? <IconButton icon={offlineMap.has(currentPlaybackSong.id) ? Check : Download} kind={offlineMap.has(currentPlaybackSong.id) ? 'soft' : 'ghost'} onPress={() => void toggleOfflineSong(currentPlaybackSong, selectedPlaylist?.id)} busy={offlineBusyId === currentPlaybackSong.id} /> : null}</View></LinearGradient><View style={styles.outputPanel}><View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Tocar em</Text><Text style={styles.sectionMeta}>{outputDevices.length > 1 ? `${outputDevices.length} dispositivos` : 'Somente este celular'}</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.outputRow}>{outputDevices.map((device) => { const active = device.deviceId === selectedOutputDeviceId; const isLocal = device.deviceId === deviceId; const DeviceIcon = isLocal ? Smartphone : Speaker; const deviceState = isLocal ? (isPlaying ? 'tocando' : currentId ? 'pausado' : 'local') : device.lastState?.status || 'ativo'; return <Pressable key={device.deviceId} style={[styles.outputChip, active && styles.outputChipActive]} onPress={() => setSelectedOutputDeviceId(device.deviceId)}><DeviceIcon size={16} color={active ? '#ffffff' : '#cfd4d9'} strokeWidth={2.4} /><View style={styles.outputChipTextBlock}><Text numberOfLines={1} style={[styles.outputChipTitle, active && styles.outputChipTitleActive]}>{isLocal ? 'Este celular' : device.deviceName || 'MusFy'}</Text><Text numberOfLines={1} style={[styles.outputChipMeta, active && styles.outputChipMetaActive]}>{deviceState}</Text></View></Pressable>; })}</ScrollView></View></View>;
+    return <View style={[styles.playerShell, activeOnboardingStepId === 'player' && styles.tourHighlight]}><LinearGradient colors={['#181a1f', '#111318']} style={styles.playerCard}><View style={styles.playerTop}><Artwork uri={currentThumbnail} size={112} radius={26} /><View style={styles.playerBody}><View style={styles.playerBadgeRow}><View style={styles.playerBadge}><Speaker size={12} color="#d8dde2" strokeWidth={2.4} /><Text style={styles.playerBadgeText}>{selectedOutputDevice?.deviceName || 'Este celular'}</Text></View><View style={styles.playerBadge}><Text style={styles.playerBadgeText}>{shownStatus}</Text></View>{playbackQueue.length > 1 ? <View style={styles.playerBadge}><Text style={styles.playerBadgeText}>lista ativa</Text></View> : null}</View><Text numberOfLines={2} style={styles.playerTitle}>{shownTitle}</Text><Text numberOfLines={1} style={styles.playerArtist}>{shownArtist}</Text><View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.max(5, progress * 100)}%` }]} /></View><View style={styles.progressMetaRow}><Text style={styles.progressMeta}>{remoteSelected ? (remoteState?.status || 'remoto') : formatTime(positionMs)}</Text><Text style={styles.progressMeta}>{remoteSelected ? 'rede local' : formatTime(durationMs)}</Text></View></View></View><View style={styles.controlsRow}><IconButton icon={SkipBack} onPress={() => void playAdjacent(-1)} disabled={!canSkipPrevious} /><IconButton icon={isPlaying && playbackTarget !== 'remote' ? Pause : Play} kind="primary" onPress={() => void togglePlayback()} disabled={(!currentId && playbackTarget === 'local') || playerBusy} busy={playerBusy} /><IconButton icon={SkipForward} onPress={() => void playAdjacent(1)} disabled={!canSkipNext} />{currentPlaybackSong ? <IconButton icon={offlineMap.has(currentPlaybackSong.id) ? Check : Download} kind={offlineMap.has(currentPlaybackSong.id) ? 'soft' : 'ghost'} onPress={() => void toggleOfflineSong(currentPlaybackSong, selectedPlaylist?.id)} busy={offlineBusyId === currentPlaybackSong.id} /> : null}</View></LinearGradient><View style={[styles.outputPanel, activeOnboardingStepId === 'output' && styles.tourHighlight]}><View style={styles.sectionHeader}><Text style={styles.sectionTitle}>Tocar em</Text><Text style={styles.sectionMeta}>{outputDevices.length > 1 ? `${outputDevices.length} dispositivos` : 'Somente este celular'}</Text></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.outputRow}>{outputDevices.map((device) => { const active = device.deviceId === selectedOutputDeviceId; const isLocal = device.deviceId === deviceId; const DeviceIcon = isLocal ? Smartphone : Speaker; const deviceState = isLocal ? (isPlaying ? 'tocando' : currentId ? 'pausado' : 'local') : device.lastState?.status || 'ativo'; return <Pressable key={device.deviceId} style={[styles.outputChip, active && styles.outputChipActive]} onPress={() => setSelectedOutputDeviceId(device.deviceId)}><DeviceIcon size={16} color={active ? '#ffffff' : '#cfd4d9'} strokeWidth={2.4} /><View style={styles.outputChipTextBlock}><Text numberOfLines={1} style={[styles.outputChipTitle, active && styles.outputChipTitleActive]}>{isLocal ? 'Este celular' : device.deviceName || 'MusFy'}</Text><Text numberOfLines={1} style={[styles.outputChipMeta, active && styles.outputChipMetaActive]}>{deviceState}</Text></View></Pressable>; })}</ScrollView></View></View>;
   }
 
   function renderPlaylistStrip() {
@@ -601,7 +693,7 @@ function MusFyApp() {
     const listSize = activeView === 'offline' ? visibleOfflineTracks.length : visibleTracks.length;
     const title = activeView === 'playlists' ? selectedPlaylist?.name || 'Playlist' : activeView === 'favorites' ? 'Favoritas' : activeView === 'offline' ? 'Offline' : 'Biblioteca';
     const queueActive = playbackQueue.length > 1 && playbackTarget === 'local';
-    return <View style={styles.trackSectionHeader}><View style={styles.trackSectionMetaBlock}><Text style={styles.trackSectionTitle}>{title}</Text><Text style={styles.trackSectionMeta}>{listSize} faixas</Text></View><Pressable style={[styles.listActionButton, queueActive && styles.listActionButtonActive, (!listSize || playerBusy) && styles.iconButtonDisabled]} onPress={() => void startVisibleQueue()} disabled={!listSize || playerBusy}><Play size={14} color={queueActive ? '#08130d' : '#1ed760'} fill={queueActive ? '#08130d' : 'transparent'} strokeWidth={2.5} /><Text style={[styles.listActionText, queueActive && styles.listActionTextActive]}>{queueActive ? 'Lista ativa' : 'Tocar lista'}</Text></Pressable></View>;
+    return <View style={[styles.trackSectionHeader, activeOnboardingStepId === 'offline' && styles.tourHighlight]}><View style={styles.trackSectionMetaBlock}><Text style={styles.trackSectionTitle}>{title}</Text><Text style={styles.trackSectionMeta}>{listSize} faixas</Text></View><Pressable style={[styles.listActionButton, queueActive && styles.listActionButtonActive, (!listSize || playerBusy) && styles.iconButtonDisabled]} onPress={() => void startVisibleQueue()} disabled={!listSize || playerBusy}><Play size={14} color={queueActive ? '#08130d' : '#1ed760'} fill={queueActive ? '#08130d' : 'transparent'} strokeWidth={2.5} /><Text style={[styles.listActionText, queueActive && styles.listActionTextActive]}>{queueActive ? 'Lista ativa' : 'Tocar lista'}</Text></Pressable></View>;
   }
 
   function renderTrack(song: Song) {
@@ -626,11 +718,11 @@ function MusFyApp() {
   }
 
   function renderMain() {
-    return <SafeAreaView style={styles.root}><StatusBar style="light" /><LinearGradient colors={['#0b0c0e', '#111317']} style={styles.mainGradient}><ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refreshAll()} tintColor="#1ed760" />} showsVerticalScrollIndicator={false}>{renderHeader()}{renderPlayer()}<View style={styles.searchBar}><Search size={18} color="#8f98a3" strokeWidth={2.4} /><TextInput style={styles.searchInput} placeholder="Buscar faixa ou artista" placeholderTextColor="#626a73" value={search} onChangeText={setSearch} /></View><SegmentTabs items={['library', 'favorites', 'playlists', 'offline'] as const} selected={activeView} meta={VIEW_META} onChange={setActiveView} />{activeView === 'playlists' ? renderPlaylistStrip() : null}{renderTrackListHeader()}{renderTracks()}</ScrollView></LinearGradient></SafeAreaView>;
+    return <SafeAreaView style={styles.root}><StatusBar style="light" /><LinearGradient colors={['#0b0c0e', '#111317']} style={styles.mainGradient}><ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refreshAll()} tintColor="#1ed760" />} showsVerticalScrollIndicator={false}>{renderHeader()}{renderPlayer()}<View style={[styles.searchBar, activeOnboardingStepId === 'search' && styles.tourHighlight]}><Search size={18} color="#8f98a3" strokeWidth={2.4} /><TextInput style={styles.searchInput} placeholder="Buscar faixa ou artista" placeholderTextColor="#626a73" value={search} onChangeText={setSearch} /></View><View style={activeOnboardingStepId === 'views' ? styles.tourHighlight : undefined}><SegmentTabs items={['library', 'favorites', 'playlists', 'offline'] as const} selected={activeView} meta={VIEW_META} onChange={setActiveView} /></View>{activeView === 'playlists' ? renderPlaylistStrip() : null}{renderTrackListHeader()}{renderTracks()}</ScrollView></LinearGradient></SafeAreaView>;
   }
 
   if (showSplash) return <SplashScreenView />;
-  return <>{!currentUser ? renderLogin() : renderMain()}{banner ? <View pointerEvents="none" style={[styles.banner, banner.tone === 'success' && styles.bannerSuccess, banner.tone === 'error' && styles.bannerError]}><Text style={styles.bannerText}>{banner.text}</Text></View> : null}</>;
+  return <>{!currentUser ? renderLogin() : renderMain()}{banner ? <View pointerEvents="none" style={[styles.banner, banner.tone === 'success' && styles.bannerSuccess, banner.tone === 'error' && styles.bannerError]}><Text style={styles.bannerText}>{banner.text}</Text></View> : null}{isOnboardingOpen && activeOnboardingStep ? <Suspense fallback={null}><MobileOnboardingOverlay step={activeOnboardingStep} stepIndex={onboardingStepIndex} totalSteps={MOBILE_ONBOARDING_STEPS.length} onBack={() => setOnboardingStepIndex((current) => Math.max(0, current - 1))} onNext={() => { if (onboardingStepIndex >= MOBILE_ONBOARDING_STEPS.length - 1) { closeOnboarding(true); return; } setOnboardingStepIndex((current) => Math.min(MOBILE_ONBOARDING_STEPS.length - 1, current + 1)); }} onClose={closeOnboarding} /></Suspense> : null}</>;
 }
 
 export default function App() {
@@ -670,6 +762,17 @@ const styles = StyleSheet.create({
   headerTitle: { color: '#ffffff', fontSize: 28, fontWeight: '900' },
   headerMeta: { color: '#8f98a3', fontSize: 13 },
   headerActions: { flexDirection: 'row', gap: 8 },
+  tourHighlight: {
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: '#2af5c7',
+    backgroundColor: 'rgba(42, 245, 199, 0.06)',
+    shadowColor: '#2af5c7',
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8
+  },
   playerShell: { gap: 14 },
   playerCard: { borderRadius: 28, padding: 18, borderWidth: 1, borderColor: '#24282e', gap: 18 },
   playerTop: { flexDirection: 'row', gap: 16 },

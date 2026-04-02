@@ -7,8 +7,6 @@ const tls = require('tls');
 const cors = require('cors');
 const multer = require('multer');
 const { spawn } = require('child_process');
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const { createRuntimeServices } = require('./runtime-services');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -21,6 +19,25 @@ const DEFAULT_ANDROID_APK_URL = `${DEFAULT_ANDROID_RELEASE_URL}/download/MusFy-A
 
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
+
+let ffmpegPathCache = null;
+let runtimeServicesFactory = null;
+
+function getFfmpegPath() {
+  if (!ffmpegPathCache) {
+    ffmpegPathCache = require('@ffmpeg-installer/ffmpeg').path;
+  }
+
+  return ffmpegPathCache;
+}
+
+function getRuntimeServicesFactory() {
+  if (!runtimeServicesFactory) {
+    runtimeServicesFactory = require('./runtime-services').createRuntimeServices;
+  }
+
+  return runtimeServicesFactory;
+}
 
 app.get('/health', (req, res) => {
   const storage = runtimeServices?.getServiceStorageSummary() || null;
@@ -112,7 +129,6 @@ function resolveYtDlpPath() {
 }
 
 const YTDLP_PATH = resolveYtDlpPath();
-const FFMPEG_PATH = ffmpegInstaller.path;
 const NODE_RUNTIME_PATH = process.execPath;
 
 function resolveRuntimeRootDir() {
@@ -1233,7 +1249,7 @@ function saveYoutubeSearchCache() {
 
 loadYoutubeSearchCache();
 
-runtimeServices = createRuntimeServices({
+runtimeServices = getRuntimeServicesFactory()({
   runtimeRootDir,
   dataDir,
   emitLog: (message) => addLog(message)
@@ -2635,7 +2651,7 @@ async function normalizeVideoForPlayback(inputPath, outputPath, jobId = null) {
     ];
 
     addLog(`[video] Normalizando video para playback | origem=${path.basename(inputPath)}`);
-    const ffmpeg = spawnManagedProcess(jobId, FFMPEG_PATH, args, { windowsHide: true });
+    const ffmpeg = spawnManagedProcess(jobId, getFfmpegPath(), args, { windowsHide: true });
 
     ffmpeg.stdout.on('data', (data) => {
       const text = data.toString().trim();
@@ -3675,7 +3691,7 @@ async function convertToOpus(inputPath, outputPath, jobId = null) {
     ];
 
     addLog('[convert] Convertendo para OPUS 16k mono...');
-    const ffmpeg = spawnManagedProcess(jobId, FFMPEG_PATH, args, { windowsHide: true });
+    const ffmpeg = spawnManagedProcess(jobId, getFfmpegPath(), args, { windowsHide: true });
 
     ffmpeg.stdout.on('data', (data) => {
       const text = data.toString().trim();
