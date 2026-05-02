@@ -139,6 +139,13 @@ interface YoutubeActionModalState {
   selection: YoutubeSearchSelection;
 }
 
+interface YoutubePreviewState {
+  title: string;
+  subtitle?: string | null;
+  url: string;
+  videoId?: string | null;
+}
+
 interface YoutubeRecentSearch {
   query: string;
   lastSearchedAt: string;
@@ -450,6 +457,31 @@ function getYoutubePlaylistSubtitle(result: YoutubeSearchPlaylistResult) {
   return [result.channel, result.entryCount ? `${result.entryCount} faixas` : null].filter(Boolean).join(' • ');
 }
 
+function getYoutubeVideoIdFromUrl(url?: string | null) {
+  const value = String(url || '').trim();
+  if (!value) return null;
+
+  const patterns = [
+    /(?:youtube\.com\/watch\?[^#]*v=)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtu\.be\/)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{6,})/,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{6,})/
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function getYoutubeEmbedUrl(videoId?: string | null) {
+  const id = String(videoId || '').trim();
+  if (!id) return null;
+  return `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0&modestbranding=1`;
+}
+
 function getDeviceStatusLabel(device: DeviceSession) {
   const status = device.lastState?.status;
   if (status === 'playing') return 'Tocando agora';
@@ -608,6 +640,7 @@ export default function App() {
   const [youtubeSearchResults, setYoutubeSearchResults] = useState<YoutubeSearchResult[]>([]);
   const [youtubePlaylistSearchResults, setYoutubePlaylistSearchResults] = useState<YoutubeSearchPlaylistResult[]>([]);
   const [youtubeActionModal, setYoutubeActionModal] = useState<YoutubeActionModalState | null>(null);
+  const [youtubePreview, setYoutubePreview] = useState<YoutubePreviewState | null>(null);
   const [youtubeSearchSource, setYoutubeSearchSource] = useState('');
   const [youtubeSearchMessage, setYoutubeSearchMessage] = useState('');
   const [youtubeRecentSearches, setYoutubeRecentSearches] = useState<YoutubeRecentSearch[]>([]);
@@ -699,6 +732,7 @@ export default function App() {
   const desktopUpdatePanelRef = useRef<HTMLDivElement | null>(null);
   const desktopUpdateNotesRef = useRef<HTMLDivElement | null>(null);
   const desktopUpdateFocusTimerRef = useRef<number | null>(null);
+  const youtubeSelectionRequestIdRef = useRef(0);
 
   const desktopApi = {
     minimizeToTray: async () => {
@@ -1294,6 +1328,7 @@ export default function App() {
     const normalizedUrl = youtubeUrl.trim();
 
     if (!normalizedUrl) {
+      youtubeSelectionRequestIdRef.current += 1;
       setYoutubeAnalysis(null);
       setYoutubeActionModal(null);
       setLastAnalyzedUrl('');
@@ -1302,7 +1337,6 @@ export default function App() {
 
     if (normalizedUrl !== lastAnalyzedUrl) {
       setYoutubeAnalysis(null);
-      setYoutubeActionModal(null);
     }
   }, [youtubeUrl, lastAnalyzedUrl]);
 
@@ -2349,6 +2383,7 @@ export default function App() {
 
     setIsSearchingYoutube(true);
     setYoutubeSearchMessage('Buscando no YouTube...');
+    youtubeSelectionRequestIdRef.current += 1;
     setYoutubeAnalysis(null);
     setYoutubeActionModal(null);
 
@@ -2425,7 +2460,31 @@ export default function App() {
     }
   });
 
+  const openYoutubePreview = (preview: YoutubePreviewState) => {
+    const videoId = preview.videoId || getYoutubeVideoIdFromUrl(preview.url);
+    if (!videoId) {
+      setDownloadMessage('Não foi possível abrir a prévia deste resultado do YouTube.');
+      return;
+    }
+
+    setYoutubePreview({
+      ...preview,
+      videoId
+    });
+  };
+
+  const closeYoutubePreview = () => {
+    setYoutubePreview(null);
+  };
+
+  const closeYoutubeActionModal = () => {
+    youtubeSelectionRequestIdRef.current += 1;
+    setYoutubeActionModal(null);
+  };
+
   const selectYoutubeSearchResult = async (result: YoutubeSearchResult) => {
+    const requestId = youtubeSelectionRequestIdRef.current + 1;
+    youtubeSelectionRequestIdRef.current = requestId;
     const baseSelection = {
       kind: 'track',
       title: result.title,
@@ -2443,7 +2502,8 @@ export default function App() {
       analysis: buildFallbackYoutubeTrackAnalysis(result),
       selection: baseSelection
     });
-    const analysis = await inspectYoutubeLink(result.url);
+    const analysis = await inspectYoutubeLink(result.url, requestId);
+    if (youtubeSelectionRequestIdRef.current !== requestId) return;
     if (analysis?.selectedEntry?.title) {
       setYoutubeTitle(analysis.selectedEntry.title);
     }
@@ -2460,6 +2520,8 @@ export default function App() {
   };
 
   const selectYoutubePlaylistSearchResult = async (result: YoutubeSearchPlaylistResult) => {
+    const requestId = youtubeSelectionRequestIdRef.current + 1;
+    youtubeSelectionRequestIdRef.current = requestId;
     const baseSelection = {
       kind: 'playlist',
       title: result.title,
@@ -2477,7 +2539,8 @@ export default function App() {
       analysis: buildFallbackYoutubePlaylistAnalysis(result),
       selection: baseSelection
     });
-    const analysis = await inspectYoutubeLink(result.url);
+    const analysis = await inspectYoutubeLink(result.url, requestId);
+    if (youtubeSelectionRequestIdRef.current !== requestId) return;
     if (analysis?.selectedEntry?.title) {
       setYoutubeTitle(analysis.selectedEntry.title);
     }
@@ -2493,7 +2556,7 @@ export default function App() {
     }
   };
 
-  const inspectYoutubeLink = async (rawUrl?: string) => {
+  const inspectYoutubeLink = async (rawUrl?: string, selectionRequestId?: number) => {
     const url = (rawUrl || youtubeUrl).trim();
     if (!url) return null;
 
@@ -2508,6 +2571,9 @@ export default function App() {
     try {
       const res = await api.post('/baixar-youtube/analisar', { url }, { timeout: 45000 });
       const analysis = (res.data?.analysis || null) as YoutubeAnalysis | null;
+      if (selectionRequestId && youtubeSelectionRequestIdRef.current !== selectionRequestId) {
+        return analysis;
+      }
       setYoutubeAnalysis(analysis);
       setLastAnalyzedUrl(url);
 
@@ -2521,6 +2587,9 @@ export default function App() {
 
       return analysis;
     } catch (error: any) {
+      if (selectionRequestId && youtubeSelectionRequestIdRef.current !== selectionRequestId) {
+        return null;
+      }
       const backendMessage = error?.response?.data?.error;
       const networkMessage =
         error?.message === 'Network Error'
@@ -2658,7 +2727,7 @@ export default function App() {
     try {
       await api.post('/downloads/enqueue', task);
       await loadDownloadJobs();
-      setYoutubeActionModal(null);
+      closeYoutubeActionModal();
       setDownloadMessage(`"${task.label}" foi adicionada à fila de downloads.`);
     } catch (error: any) {
       setDownloadMessage(error?.response?.data?.error || 'Falha ao adicionar item à fila.');
@@ -3699,10 +3768,22 @@ export default function App() {
 
                         <div className="pr-2">
                           <div className="grid gap-4 xl:grid-cols-2">
-                          {youtubePlaylistSearchResults.map((result) => (
-                            <button
+                          {youtubePlaylistSearchResults.map((result) => {
+                            const previewEntry = result.previewEntries?.[0] || null;
+                            const previewVideoId = previewEntry?.id || getYoutubeVideoIdFromUrl(previewEntry?.url || result.url);
+
+                            return (
+                            <div
                               key={`${result.id}-${result.url}`}
                               onClick={() => void selectYoutubePlaylistSearchResult(result)}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  void selectYoutubePlaylistSearchResult(result);
+                                }
+                              }}
                               className="group overflow-hidden rounded-[26px] border border-cyan-400/15 bg-[#071116] text-left transition hover:border-cyan-300/35 hover:bg-[#0b151b]"
                             >
                               <div className="relative aspect-[16/9] overflow-hidden bg-black">
@@ -3749,13 +3830,42 @@ export default function App() {
                                   </div>
                                 ) : null}
 
-                                <div className="mt-4 flex items-center justify-between text-xs">
-                                  <span className="text-cyan-200/80">Abrir faixa e playlist</span>
-                                  <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-cyan-100">4 ações</span>
+                                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (!previewEntry || !previewVideoId) {
+                                        setDownloadMessage('Esta playlist não trouxe uma faixa de prévia para assistir agora.');
+                                        return;
+                                      }
+                                      openYoutubePreview({
+                                        title: previewEntry.title || result.title,
+                                        subtitle: getYoutubePlaylistSubtitle(result) || 'Prévia da playlist',
+                                        url: previewEntry.url,
+                                        videoId: previewVideoId
+                                      });
+                                    }}
+                                    disabled={!previewEntry || !previewVideoId}
+                                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-cyan-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                                  >
+                                    Assistir agora
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void selectYoutubePlaylistSearchResult(result);
+                                    }}
+                                    className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-cyan-100 transition hover:bg-cyan-300/15"
+                                  >
+                                    4 ações
+                                  </button>
                                 </div>
                               </div>
-                            </button>
-                          ))}
+                            </div>
+                          );
+                          })}
                           </div>
                         </div>
                       </div>
@@ -3775,10 +3885,21 @@ export default function App() {
 
                         <div className="pr-2">
                         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {youtubeSearchResults.map((result) => (
-                          <button
+                        {youtubeSearchResults.map((result) => {
+                          const previewVideoId = result.id || getYoutubeVideoIdFromUrl(result.url);
+
+                          return (
+                          <div
                             key={`${result.id}-${result.url}`}
                             onClick={() => void selectYoutubeSearchResult(result)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                void selectYoutubeSearchResult(result);
+                              }
+                            }}
                             className="group overflow-hidden rounded-[24px] border border-white/10 bg-[#081015] text-left transition hover:border-cyan-300/30 hover:bg-[#0b151b]"
                           >
                             <div className="relative aspect-video overflow-hidden bg-black">
@@ -3807,13 +3928,38 @@ export default function App() {
                             <div className="p-4">
                               <p className="line-clamp-2 text-sm font-semibold text-white">{result.title}</p>
                               <p className="mt-2 text-xs text-gray-400">{getYoutubeResultSubtitle(result) || 'Resultado pronto para download'}</p>
-                              <div className="mt-4 flex items-center justify-between text-xs">
-                                <span className="text-cyan-200/80">Abrir ações</span>
-                                <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-cyan-100">faixa</span>
+                              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openYoutubePreview({
+                                      title: result.title,
+                                      subtitle: getYoutubeResultSubtitle(result) || 'Resultado do YouTube',
+                                      url: result.url,
+                                      videoId: previewVideoId
+                                    });
+                                  }}
+                                  disabled={!previewVideoId}
+                                  className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-cyan-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                                >
+                                  Assistir agora
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void selectYoutubeSearchResult(result);
+                                  }}
+                                  className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-cyan-100 transition hover:bg-cyan-300/15"
+                                >
+                                  Ações
+                                </button>
                               </div>
                             </div>
-                          </button>
-                        ))}
+                          </div>
+                        );
+                        })}
                         </div>
                         </div>
                       </div>
@@ -4638,6 +4784,66 @@ export default function App() {
         </div>
       ) : null}
 
+      {youtubePreview ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-6 py-10 backdrop-blur-sm">
+          <div className="w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/10 bg-[#0b0b0b] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">Prévia do YouTube</p>
+                <h3 className="mt-2 truncate text-xl font-black tracking-tight text-white">{youtubePreview.title}</h3>
+                {youtubePreview.subtitle ? <p className="mt-1 truncate text-sm text-gray-400">{youtubePreview.subtitle}</p> : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => {
+                    const analysis = buildFallbackYoutubeTrackAnalysis({
+                      id: youtubePreview.videoId || getYoutubeVideoIdFromUrl(youtubePreview.url) || '',
+                      title: youtubePreview.title,
+                      url: youtubePreview.url,
+                      channel: youtubePreview.subtitle || undefined
+                    });
+                    setYoutubePreview(null);
+                    setYoutubeActionModal({
+                      analysis,
+                      selection: {
+                        kind: 'track',
+                        title: youtubePreview.title,
+                        subtitle: youtubePreview.subtitle
+                      }
+                    });
+                  }}
+                  className="rounded-xl border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-400/15"
+                >
+                  Ações
+                </button>
+                <button
+                  onClick={closeYoutubePreview}
+                  className="rounded-xl p-2 text-gray-400 hover:bg-white/5 hover:text-white"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="aspect-video bg-black">
+              {getYoutubeEmbedUrl(youtubePreview.videoId) ? (
+                <iframe
+                  key={youtubePreview.videoId}
+                  src={getYoutubeEmbedUrl(youtubePreview.videoId) || undefined}
+                  title={youtubePreview.title}
+                  className="h-full w-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center px-8 text-center text-sm text-gray-400">
+                  Não foi possível montar a prévia deste vídeo.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {youtubeActionModal ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-6 py-10 backdrop-blur-sm">
           <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[32px] border border-white/10 bg-[#0b0b0b] p-6 shadow-2xl">
@@ -4670,7 +4876,7 @@ export default function App() {
               </div>
 
               <button
-                onClick={() => setYoutubeActionModal(null)}
+                onClick={closeYoutubeActionModal}
                 className="rounded-xl p-2 text-gray-400 hover:bg-white/5 hover:text-white"
               >
                 <X size={18} />
@@ -4681,8 +4887,32 @@ export default function App() {
               <div className="grid gap-3 md:grid-cols-2">
                 <button
                   onClick={() => {
+                    const selectedEntry = youtubeActionModal.analysis.selectedEntry;
+                    if (!selectedEntry) {
+                      setDownloadMessage('Esta seleção ainda não possui uma faixa pronta para prévia.');
+                      return;
+                    }
+                    closeYoutubeActionModal();
+                    openYoutubePreview({
+                      title: selectedEntry.title || youtubeActionModal.selection.title,
+                      subtitle: youtubeActionModal.selection.subtitle || 'Prévia antes do download',
+                      url: selectedEntry.url,
+                      videoId: selectedEntry.id || getYoutubeVideoIdFromUrl(selectedEntry.url)
+                    });
+                  }}
+                  disabled={!youtubeActionModal.analysis.selectedEntry}
+                  className="rounded-[24px] border border-cyan-400/30 bg-cyan-400/10 p-5 text-left transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <p className="text-sm font-semibold text-white">Assistir agora no MusFy</p>
+                  <p className="mt-2 text-xs leading-5 text-cyan-100/80">
+                    Abre uma prévia incorporada do YouTube dentro do aplicativo, sem baixar nada.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => {
                     const analysis = youtubeActionModal.analysis;
-                    setYoutubeActionModal(null);
+                    closeYoutubeActionModal();
                     void startYoutubeDownload('single', analysis);
                   }}
                   disabled={isDownloading || !youtubeActionModal.analysis.selectedEntry}
@@ -4697,7 +4927,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     const analysis = youtubeActionModal.analysis;
-                    setYoutubeActionModal(null);
+                    closeYoutubeActionModal();
                     void startYoutubeDownload('video', analysis);
                   }}
                   disabled={isDownloading || !youtubeActionModal.analysis.selectedEntry}
@@ -4712,7 +4942,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     const analysis = youtubeActionModal.analysis;
-                    setYoutubeActionModal(null);
+                    closeYoutubeActionModal();
                     enqueueYoutubeDownload('single', analysis);
                   }}
                   disabled={!youtubeActionModal.analysis.selectedEntry}
@@ -4729,7 +4959,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         const analysis = youtubeActionModal.analysis;
-                        setYoutubeActionModal(null);
+                        closeYoutubeActionModal();
                         void startYoutubeDownload('playlist', analysis);
                       }}
                       disabled={isDownloading}
@@ -4744,7 +4974,7 @@ export default function App() {
                     <button
                       onClick={() => {
                         const analysis = youtubeActionModal.analysis;
-                        setYoutubeActionModal(null);
+                        closeYoutubeActionModal();
                         enqueueYoutubeDownload('playlist', analysis);
                       }}
                       disabled={false}
