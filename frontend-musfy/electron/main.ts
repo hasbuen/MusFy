@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, Notification } from 'electron';
+﻿import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, Notification, dialog } from 'electron';
 import { spawn } from 'child_process';
 import type { Rectangle } from 'electron';
 import fs from 'fs';
@@ -42,6 +42,8 @@ type AppPreferences = {
   startHiddenInTray: boolean;
   autoUpdateEnabled: boolean;
   updateFeedUrl: string;
+  backupDirectory: string;
+  backupFormat: 'mp3' | 'mp4' | 'avi';
 };
 
 type UpdateState =
@@ -79,7 +81,9 @@ const defaultPreferences: AppPreferences = {
   showSplash: true,
   startHiddenInTray: false,
   autoUpdateEnabled: true,
-  updateFeedUrl: ''
+  updateFeedUrl: '',
+  backupDirectory: '',
+  backupFormat: 'mp3'
 };
 
 let appPreferences: AppPreferences = { ...defaultPreferences };
@@ -139,7 +143,11 @@ function loadPreferences() {
       showSplash: parsed?.showSplash !== false,
       startHiddenInTray: Boolean(parsed?.startHiddenInTray),
       autoUpdateEnabled: parsed?.autoUpdateEnabled !== false,
-      updateFeedUrl: String(parsed?.updateFeedUrl || '').trim()
+      updateFeedUrl: String(parsed?.updateFeedUrl || '').trim(),
+      backupDirectory: String(parsed?.backupDirectory || '').trim(),
+      backupFormat: ['mp3', 'mp4', 'avi'].includes(String(parsed?.backupFormat || '').toLowerCase())
+        ? String(parsed.backupFormat).toLowerCase() as AppPreferences['backupFormat']
+        : 'mp3'
     } satisfies AppPreferences;
   } catch (error) {
     log('Falha ao carregar preferencias:', error);
@@ -1349,6 +1357,7 @@ function registerIpc() {
   ipcMain.removeHandler('app:get-update-status');
   ipcMain.removeHandler('app:check-for-updates');
   ipcMain.removeHandler('app:install-update');
+  ipcMain.removeHandler('app:select-backup-directory');
   ipcMain.removeAllListeners('service:get-config');
 
   ipcMain.handle('window:minimize-to-tray', async () => {
@@ -1459,6 +1468,21 @@ function registerIpc() {
       }
     });
     return true;
+  });
+  ipcMain.handle('app:select-backup-directory', async () => {
+    const dialogOptions = {
+      title: 'Escolha a pasta de backup do MusFy',
+      properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+
+    if (result.canceled || !result.filePaths[0]) {
+      return null;
+    }
+
+    return result.filePaths[0];
   });
   ipcMain.handle('app:open-external', async (_event, targetUrl: string) => {
     const safeUrl = String(targetUrl || '').trim();

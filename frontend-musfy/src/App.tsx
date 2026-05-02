@@ -161,6 +161,8 @@ interface DesktopPreferences {
   startHiddenInTray: boolean;
   autoUpdateEnabled: boolean;
   updateFeedUrl: string;
+  backupDirectory: string;
+  backupFormat: BackupFormat;
 }
 
 interface DesktopUpdateStatus {
@@ -176,6 +178,26 @@ interface DesktopUpdateStatus {
   releaseUrl?: string | null;
 }
 
+
+interface MusicBackupResult {
+  success: boolean;
+  targetDir: string;
+  format: BackupFormat;
+  total: number;
+  exported: Array<{
+    id: string;
+    title: string;
+    artist?: string | null;
+    path: string;
+    fileName: string;
+    usedVideoSource?: boolean;
+  }>;
+  skipped: Array<{
+    id?: string;
+    title?: string;
+    reason: string;
+  }>;
+}
 interface DeviceSession {
   deviceId: string;
   deviceName: string;
@@ -230,6 +252,7 @@ type ViewMode = 'grid' | 'list';
 type Section = 'home' | 'explore' | 'library' | 'favorites' | 'download' | 'settings';
 type AuthMode = 'login' | 'register';
 type PlaybackMode = 'audio' | 'video';
+type BackupFormat = 'mp3' | 'mp4' | 'avi';
 
 type PlayerSnapshot = {
   currentSong: Song | null;
@@ -635,7 +658,9 @@ export default function App() {
     showSplash: true,
     startHiddenInTray: false,
     autoUpdateEnabled: true,
-    updateFeedUrl: ''
+    updateFeedUrl: '',
+    backupDirectory: '',
+    backupFormat: 'mp3'
   });
   const [preferDownloadOnLaunch, setPreferDownloadOnLaunch] = useState(
     () => localStorage.getItem('musfy-prefer-download-on-launch') !== 'false'
@@ -644,6 +669,9 @@ export default function App() {
   const [apkQrCodeDataUrl, setApkQrCodeDataUrl] = useState('');
   const [serviceStorage, setServiceStorage] = useState<any>(null);
   const [settingsMessage, setSettingsMessage] = useState('');
+  const [backupMessage, setBackupMessage] = useState('');
+  const [isBackupRunning, setIsBackupRunning] = useState(false);
+  const [lastBackupResult, setLastBackupResult] = useState<MusicBackupResult | null>(null);
   const [desktopUpdateFocusTarget, setDesktopUpdateFocusTarget] = useState<'panel' | 'notes' | null>(null);
   const [desktopUpdateStatus, setDesktopUpdateStatus] = useState<DesktopUpdateStatus>({
     state: 'idle',
@@ -708,6 +736,10 @@ export default function App() {
     openExternal: async (targetUrl: string) => {
       if (!window.musfyDesktop?.openExternal) return false;
       return window.musfyDesktop.openExternal(targetUrl);
+    },
+    selectBackupDirectory: async () => {
+      if (!window.musfyDesktop?.selectBackupDirectory) return null;
+      return window.musfyDesktop.selectBackupDirectory();
     }
   };
 
@@ -1537,6 +1569,105 @@ export default function App() {
                 </span>
               </button>
 
+              <div className="rounded-[24px] border border-emerald-400/15 bg-emerald-400/[0.04] p-5">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-300">Backup da biblioteca</p>
+                    <p className="mt-2 text-lg font-semibold text-white">Exportar músicas para uma pasta do sistema</p>
+                    <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-400">
+                      Gere uma cópia dos arquivos da sua biblioteca em MP3, MP4 ou AVI no diretório que você escolher.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-100">
+                    {desktopPreferences.backupFormat.toUpperCase()}
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_auto]">
+                  <div className="min-w-0 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                    <label className="text-[11px] uppercase tracking-[0.2em] text-gray-500">Pasta de destino</label>
+                    <input
+                      value={desktopPreferences.backupDirectory}
+                      onChange={(e) =>
+                        setDesktopPreferences((prev) => ({
+                          ...prev,
+                          backupDirectory: e.target.value
+                        }))
+                      }
+                      onBlur={() => void updateDesktopPreference({ backupDirectory: desktopPreferences.backupDirectory })}
+                      placeholder="Ex.: C:\\Users\\SeuUsuario\\Music\\MusFy Backup"
+                      className="mt-2 h-9 w-full truncate bg-transparent text-sm font-semibold text-white outline-none placeholder:text-gray-600"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void chooseBackupDirectory()}
+                    className="inline-flex h-14 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-sm font-semibold text-gray-200 hover:bg-white/[0.08]"
+                  >
+                    <FolderOpen size={16} />
+                    Escolher pasta
+                  </button>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {(['mp3', 'mp4', 'avi'] as BackupFormat[]).map((format) => (
+                    <button
+                      key={format}
+                      type="button"
+                      onClick={() => void updateBackupFormat(format)}
+                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                        desktopPreferences.backupFormat === format
+                          ? 'border-emerald-400/40 bg-emerald-400/15 text-emerald-100'
+                          : 'border-white/10 bg-white/[0.03] text-gray-300 hover:bg-white/[0.07]'
+                      }`}
+                    >
+                      {format.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void runMusicBackup()}
+                    disabled={isBackupRunning || !desktopPreferences.backupDirectory}
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 text-sm font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isBackupRunning ? <LoaderCircle size={16} className="animate-spin" /> : <HardDriveDownload size={16} />}
+                    {isBackupRunning ? 'Gerando backup...' : 'Gerar backup agora'}
+                  </button>
+                  <p className="text-xs leading-5 text-gray-500">
+                    MP4 e AVI usam o vídeo salvo quando existir; faixas só com áudio recebem um vídeo simples para compatibilidade.
+                  </p>
+                </div>
+
+                {backupMessage ? <p className="mt-4 text-sm leading-6 text-gray-300">{backupMessage}</p> : null}
+
+                {lastBackupResult ? (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-white">
+                        {lastBackupResult.exported.length} exportadas de {lastBackupResult.total}
+                      </p>
+                      <span className="rounded-full border border-white/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-gray-300">
+                        {lastBackupResult.format.toUpperCase()}
+                      </span>
+                    </div>
+                    {lastBackupResult.exported.length > 0 ? (
+                      <div className="mt-3 max-h-32 space-y-2 overflow-y-auto pr-1">
+                        {lastBackupResult.exported.slice(0, 5).map((item) => (
+                          <p key={`${item.id}-${item.path}`} className="truncate text-xs text-gray-400">{item.fileName}</p>
+                        ))}
+                      </div>
+                    ) : null}
+                    {lastBackupResult.skipped.length > 0 ? (
+                      <p className="mt-3 text-xs leading-5 text-amber-200">
+                        {lastBackupResult.skipped.length} faixa(s) não puderam ser convertidas. Veja a atividade para detalhes.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
               <div
                 ref={desktopUpdatePanelRef}
                 className={`rounded-[24px] border bg-[#0d0d0d] p-5 transition ${
@@ -2161,6 +2292,57 @@ export default function App() {
     setSettingsMessage('Preferencia local salva.');
   };
 
+  const chooseBackupDirectory = async () => {
+    const selectedDirectory = await desktopApi.selectBackupDirectory();
+    if (!selectedDirectory) return;
+
+    await updateDesktopPreference({ backupDirectory: selectedDirectory });
+    setBackupMessage('Pasta de backup atualizada.');
+  };
+
+  const updateBackupFormat = async (format: BackupFormat) => {
+    await updateDesktopPreference({ backupFormat: format });
+    setBackupMessage(`Formato de backup alterado para ${format.toUpperCase()}.`);
+  };
+
+  const runMusicBackup = async () => {
+    if (isBackupRunning) return;
+
+    const targetDir = desktopPreferences.backupDirectory.trim();
+    if (!targetDir) {
+      setBackupMessage('Escolha uma pasta de destino antes de iniciar o backup.');
+      return;
+    }
+
+    setIsBackupRunning(true);
+    setLastBackupResult(null);
+    setBackupMessage(`Gerando backup da sua biblioteca em ${desktopPreferences.backupFormat.toUpperCase()}...`);
+
+    try {
+      const res = await api.post(
+        '/backup/musicas',
+        {
+          targetDir,
+          format: desktopPreferences.backupFormat,
+          userId: currentUser?.id,
+          section: 'library'
+        },
+        { timeout: 0 }
+      );
+      const result = sanitizeDeepText(res.data as MusicBackupResult);
+      setLastBackupResult(result);
+      setBackupMessage(
+        result.skipped.length > 0
+          ? `Backup concluido com ${result.exported.length} arquivos. ${result.skipped.length} faixa(s) ficaram pendentes.`
+          : `Backup concluido com ${result.exported.length} arquivo(s) em ${result.targetDir}.`
+      );
+      await loadActivityLogs().catch(console.error);
+    } catch (error: any) {
+      setBackupMessage(error?.response?.data?.error || 'Falha ao gerar backup das musicas.');
+    } finally {
+      setIsBackupRunning(false);
+    }
+  };
   const searchYoutubeInsideApp = async (queryOverride?: string) => {
     const query = (queryOverride || youtubeSearchQuery).trim();
     if (!query || isSearchingYoutube) return;

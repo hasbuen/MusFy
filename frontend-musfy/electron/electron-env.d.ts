@@ -21,6 +21,8 @@ declare global {
         startHiddenInTray: boolean;
         autoUpdateEnabled: boolean;
         updateFeedUrl: string;
+        backupDirectory: string;
+        backupFormat: 'mp3' | 'mp4' | 'avi';
       }>;
       notifyRendererReady: () => void;
       getUpdateStatus: () => Promise<{
@@ -48,6 +50,7 @@ declare global {
         releaseUrl?: string | null;
       }>;
       installUpdate: () => Promise<boolean>;
+      selectBackupDirectory: () => Promise<string | null>;
       openExternal: (targetUrl: string) => Promise<boolean>;
       onUpdateStatus: (listener: (status: {
         state: 'idle' | 'disabled' | 'unconfigured' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'error';
@@ -66,11 +69,15 @@ declare global {
         startHiddenInTray?: boolean;
         autoUpdateEnabled?: boolean;
         updateFeedUrl?: string;
+        backupDirectory?: string;
+        backupFormat?: 'mp3' | 'mp4' | 'avi';
       }) => Promise<{
         showSplash: boolean;
         startHiddenInTray: boolean;
         autoUpdateEnabled: boolean;
         updateFeedUrl: string;
+        backupDirectory: string;
+        backupFormat: 'mp3' | 'mp4' | 'avi';
       }>;
     };
   }

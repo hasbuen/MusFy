@@ -3719,6 +3719,245 @@ async function convertToOpus(inputPath, outputPath, jobId = null) {
   });
 }
 
+const BACKUP_FORMATS = new Set(['mp3', 'mp4', 'avi']);
+
+function normalizeBackupFormat(value) {
+  const format = String(value || '').trim().toLowerCase();
+  if (!BACKUP_FORMATS.has(format)) {
+    throw new Error('Formato de backup invalido. Use MP3, MP4 ou AVI.');
+  }
+
+  return format;
+}
+
+function getBackupBaseName(music, index) {
+  const artist = safeFileName(music.artist || '').trim();
+  const title = safeFileName(music.title || `musica-${index + 1}`).trim() || `musica-${index + 1}`;
+  return artist ? `${artist} - ${title}` : title;
+}
+
+function getUniqueOutputPath(targetDir, baseName, extension) {
+  const cleanBase = safeFileName(baseName || 'musica') || 'musica';
+  let outputPath = path.join(targetDir, `${cleanBase}.${extension}`);
+  let suffix = 2;
+
+  while (fs.existsSync(outputPath)) {
+    outputPath = path.join(targetDir, `${cleanBase} (${suffix}).${extension}`);
+    suffix += 1;
+  }
+
+  return outputPath;
+}
+
+function resolveBackupMusicSelection({ userId, section, songIds }) {
+  const explicitIds = Array.isArray(songIds) ? songIds.map((id) => String(id)).filter(Boolean) : [];
+  if (explicitIds.length > 0) {
+    const selected = explicitIds.map((id) => findMusicById(id)).filter(Boolean).map(normalizeMusicRecord);
+    return selected.filter((music) => !userId || music.ownerUserId === userId || isMusicFavoritedByUser(music, userId));
+  }
+
+  return getScopedMusicLibrary(userId || null, section || 'library').map(normalizeMusicRecord);
+}
+
+function getBackupSourceFile(music, format) {
+  if ((format === 'mp4' || format === 'avi') && music.videoPath && fs.existsSync(music.videoPath)) {
+    return {
+      filePath: music.videoPath,
+      hasVideo: true
+    };
+  }
+
+  if (music.path && fs.existsSync(music.path)) {
+    return {
+      filePath: music.path,
+      hasVideo: false
+    };
+  }
+
+  return null;
+}
+
+function getFfmpegBackupArgs({ sourcePath, outputPath, format, hasVideo }) {
+  if (format === 'mp3') {
+    return [
+      '-y',
+      '-i',
+      sourcePath,
+      '-vn',
+      '-map_metadata',
+      '-1',
+      '-c:a',
+      'libmp3lame',
+      '-b:a',
+      '192k',
+      outputPath
+    ];
+  }
+
+  if (hasVideo) {
+    if (format === 'mp4') {
+      return [
+        '-y',
+        '-i',
+        sourcePath,
+        '-map',
+        '0:v:0?',
+        '-map',
+        '0:a:0?',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '160k',
+        '-movflags',
+        '+faststart',
+        outputPath
+      ];
+    }
+
+    return [
+      '-y',
+      '-i',
+      sourcePath,
+      '-map',
+      '0:v:0?',
+      '-map',
+      '0:a:0?',
+      '-c:v',
+      'mpeg4',
+      '-q:v',
+      '5',
+      '-c:a',
+      'libmp3lame',
+      '-b:a',
+      '192k',
+      outputPath
+    ];
+  }
+
+  const videoCodecArgs =
+    format === 'mp4'
+      ? ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart']
+      : ['-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'libmp3lame', '-b:a', '192k'];
+
+  return [
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=black:s=1280x720:r=30',
+    '-i',
+    sourcePath,
+    '-shortest',
+    '-map',
+    '0:v:0',
+    '-map',
+    '1:a:0',
+    ...videoCodecArgs,
+    outputPath
+  ];
+}
+
+function convertMediaForBackup({ sourcePath, outputPath, format, hasVideo }) {
+  return new Promise((resolve, reject) => {
+    const args = getFfmpegBackupArgs({ sourcePath, outputPath, format, hasVideo });
+    addLog(`[backup] Convertendo ${path.basename(sourcePath)} para ${format.toUpperCase()}`);
+
+    const ffmpeg = spawn(getFfmpegPath(), args, { windowsHide: true });
+    let stderr = '';
+
+    ffmpeg.stdout.on('data', (data) => {
+      const text = data.toString().trim();
+      if (text) addLog(`[backup] ffmpeg: ${text}`);
+    });
+
+    ffmpeg.stderr.on('data', (data) => {
+      const text = data.toString().trim();
+      stderr += text ? `${text}\n` : '';
+    });
+
+    ffmpeg.on('error', (err) => reject(err));
+
+    ffmpeg.on('close', (code) => {
+      if (code !== 0) {
+        const summary = stderr.split(/\r?\n/).filter(Boolean).slice(-5).join(' | ');
+        return reject(new Error(`Falha ao gerar backup ${format.toUpperCase()}${summary ? `: ${summary}` : ''}`));
+      }
+
+      if (!fs.existsSync(outputPath)) {
+        return reject(new Error('Arquivo de backup nao foi gerado.'));
+      }
+
+      resolve(outputPath);
+    });
+  });
+}
+
+async function exportMusicBackup({ targetDir, format, userId, section, songIds }) {
+  const resolvedTargetDir = path.resolve(String(targetDir || '').trim());
+  if (!resolvedTargetDir) {
+    throw new Error('Escolha uma pasta de destino para o backup.');
+  }
+
+  fs.mkdirSync(resolvedTargetDir, { recursive: true });
+
+  const selectedSongs = resolveBackupMusicSelection({ userId, section, songIds });
+  if (!selectedSongs.length) {
+    throw new Error('Nenhuma musica encontrada para backup.');
+  }
+
+  const exported = [];
+  const skipped = [];
+
+  for (let index = 0; index < selectedSongs.length; index += 1) {
+    const music = selectedSongs[index];
+    const source = getBackupSourceFile(music, format);
+
+    if (!source) {
+      skipped.push({ id: music.id, title: music.title, reason: 'Arquivo original indisponivel' });
+      continue;
+    }
+
+    const outputPath = getUniqueOutputPath(resolvedTargetDir, getBackupBaseName(music, index), format);
+
+    try {
+      await convertMediaForBackup({
+        sourcePath: source.filePath,
+        outputPath,
+        format,
+        hasVideo: source.hasVideo
+      });
+      exported.push({
+        id: music.id,
+        title: music.title,
+        artist: music.artist || null,
+        format,
+        path: outputPath,
+        fileName: path.basename(outputPath),
+        usedVideoSource: source.hasVideo
+      });
+    } catch (error) {
+      cleanupFileIfExists(outputPath);
+      skipped.push({ id: music.id, title: music.title, reason: error.message || 'Falha ao converter' });
+    }
+  }
+
+  addLog(`[backup] Backup finalizado | formato=${format.toUpperCase()} | exportadas=${exported.length} | ignoradas=${skipped.length}`);
+
+  return {
+    success: true,
+    targetDir: resolvedTargetDir,
+    format,
+    exported,
+    skipped,
+    total: selectedSongs.length
+  };
+}
 function streamMediaFile(req, res, filePath) {
   const stat = fs.statSync(filePath);
   const fileSize = stat.size;
@@ -4152,6 +4391,29 @@ app.get('/download-musica/:id', (req, res) => {
   }
 });
 
+app.post('/backup/musicas', async (req, res) => {
+  try {
+    const format = normalizeBackupFormat(req.body?.format || 'mp3');
+    const targetDir = String(req.body?.targetDir || '').trim();
+    const userId = req.body?.userId ? String(req.body.userId) : null;
+    const section = req.body?.section ? String(req.body.section) : 'library';
+    const songIds = Array.isArray(req.body?.songIds) ? req.body.songIds : [];
+
+    if (userId && !findUserById(userId)) {
+      return res.status(400).json({ error: 'Usuario invalido' });
+    }
+
+    if (!targetDir) {
+      return res.status(400).json({ error: 'Escolha uma pasta de destino para o backup.' });
+    }
+
+    const result = await exportMusicBackup({ targetDir, format, userId, section, songIds });
+    return res.json(result);
+  } catch (err) {
+    addLog(`[backup] Falha no backup: ${err.message}`);
+    return res.status(500).json({ error: err.message || 'Falha ao gerar backup das musicas.' });
+  }
+});
 app.get('/download-video/:id', (req, res) => {
   try {
     const music = findMusicById(req.params.id);
@@ -4462,7 +4724,7 @@ app.delete('/playlists/:id/musicas/:musicId', (req, res) => {
 if (fs.existsSync(frontendDistDir)) {
   app.use(express.static(frontendDistDir));
 
-  app.get(/^(?!\/(logs|devices|usuarios|auth|enviar-musica|musicas|receber-musica|baixar-youtube|reproduzir-musica|reproduzir-video|download-musica|download-video|playlists)).*/, (req, res) => {
+  app.get(/^(?!\/(logs|devices|usuarios|auth|enviar-musica|musicas|receber-musica|baixar-youtube|reproduzir-musica|reproduzir-video|download-musica|download-video|backup|playlists)).*/, (req, res) => {
     res.sendFile(path.join(frontendDistDir, 'index.html'));
   });
 }

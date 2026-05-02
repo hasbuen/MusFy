@@ -14,13 +14,14 @@ const musfyDesktop = {
   getUpdateStatus: () => ipcRenderer.invoke('app:get-update-status'),
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('app:install-update'),
+  selectBackupDirectory: () => ipcRenderer.invoke('app:select-backup-directory'),
   openExternal: (targetUrl: string) => ipcRenderer.invoke('app:open-external', targetUrl),
   onUpdateStatus: (listener: (status: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: unknown) => listener(status);
     ipcRenderer.on('app:update-status', handler);
     return () => ipcRenderer.removeListener('app:update-status', handler);
   },
-  updatePreferences: (patch: { showSplash?: boolean; startHiddenInTray?: boolean; autoUpdateEnabled?: boolean; updateFeedUrl?: string }) =>
+  updatePreferences: (patch: { showSplash?: boolean; startHiddenInTray?: boolean; autoUpdateEnabled?: boolean; updateFeedUrl?: string; backupDirectory?: string; backupFormat?: 'mp3' | 'mp4' | 'avi' }) =>
     ipcRenderer.invoke('app:update-preferences', patch)
 };
 

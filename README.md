@@ -13,6 +13,7 @@ Desktop player for Windows with local library, YouTube downloads, mini player, t
 - Video, fullscreen e mini player sincronizados sem perder o estado da reproducao.
 - Modo bandeja para continuar tocando com a interface oculta.
 - Fluxo offline para salvar faixas e manter o player pronto.
+- Backup da biblioteca para uma pasta escolhida pelo usuario em MP3, MP4 ou AVI.
 - Auto update via GitHub Releases com notas da versao dentro do app.
 
 ## Experiencia do produto
