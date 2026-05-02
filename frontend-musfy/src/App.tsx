@@ -146,6 +146,13 @@ interface YoutubePreviewState {
   videoId?: string | null;
 }
 
+interface YoutubePreviewStream {
+  streamUrl: string;
+  mimeType?: string | null;
+  title?: string | null;
+  expiresAt?: string | null;
+}
+
 interface YoutubeRecentSearch {
   query: string;
   lastSearchedAt: string;
@@ -476,12 +483,6 @@ function getYoutubeVideoIdFromUrl(url?: string | null) {
   return null;
 }
 
-function getYoutubeEmbedUrl(videoId?: string | null) {
-  const id = String(videoId || '').trim();
-  if (!id) return null;
-  return `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0&modestbranding=1`;
-}
-
 function getDeviceStatusLabel(device: DeviceSession) {
   const status = device.lastState?.status;
   if (status === 'playing') return 'Tocando agora';
@@ -641,6 +642,9 @@ export default function App() {
   const [youtubePlaylistSearchResults, setYoutubePlaylistSearchResults] = useState<YoutubeSearchPlaylistResult[]>([]);
   const [youtubeActionModal, setYoutubeActionModal] = useState<YoutubeActionModalState | null>(null);
   const [youtubePreview, setYoutubePreview] = useState<YoutubePreviewState | null>(null);
+  const [youtubePreviewStream, setYoutubePreviewStream] = useState<YoutubePreviewStream | null>(null);
+  const [youtubePreviewMessage, setYoutubePreviewMessage] = useState('');
+  const [isYoutubePreviewLoading, setIsYoutubePreviewLoading] = useState(false);
   const [youtubeSearchSource, setYoutubeSearchSource] = useState('');
   const [youtubeSearchMessage, setYoutubeSearchMessage] = useState('');
   const [youtubeRecentSearches, setYoutubeRecentSearches] = useState<YoutubeRecentSearch[]>([]);
@@ -2475,12 +2479,54 @@ export default function App() {
 
   const closeYoutubePreview = () => {
     setYoutubePreview(null);
+    setYoutubePreviewStream(null);
+    setYoutubePreviewMessage('');
+    setIsYoutubePreviewLoading(false);
   };
 
   const closeYoutubeActionModal = () => {
     youtubeSelectionRequestIdRef.current += 1;
     setYoutubeActionModal(null);
   };
+
+  useEffect(() => {
+    if (!youtubePreview?.url) return;
+
+    let canceled = false;
+    setYoutubePreviewStream(null);
+    setYoutubePreviewMessage('Preparando reprodução direta pelo YouTube...');
+    setIsYoutubePreviewLoading(true);
+
+    api
+      .post('/youtube/preview', { url: youtubePreview.url }, { timeout: 35000 })
+      .then((res) => {
+        if (canceled) return;
+        const preview = sanitizeDeepText(res.data?.preview as YoutubePreviewStream | null);
+        if (!preview?.streamUrl) {
+          throw new Error('O YouTube não retornou uma mídia compatível para prévia.');
+        }
+        setYoutubePreviewStream(preview);
+        setYoutubePreviewMessage('Reprodução pronta. A URL é temporária e vem direto do YouTube.');
+      })
+      .catch((error: any) => {
+        if (canceled) return;
+        setYoutubePreviewStream(null);
+        setYoutubePreviewMessage(
+          error?.response?.data?.error ||
+            error?.message ||
+            'Não foi possível preparar a reprodução direta deste vídeo.'
+        );
+      })
+      .finally(() => {
+        if (!canceled) {
+          setIsYoutubePreviewLoading(false);
+        }
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [youtubePreview?.url]);
 
   const selectYoutubeSearchResult = async (result: YoutubeSearchResult) => {
     const requestId = youtubeSelectionRequestIdRef.current + 1;
@@ -4825,20 +4871,28 @@ export default function App() {
               </div>
             </div>
             <div className="aspect-video bg-black">
-              {getYoutubeEmbedUrl(youtubePreview.videoId) ? (
-                <iframe
-                  key={youtubePreview.videoId}
-                  src={getYoutubeEmbedUrl(youtubePreview.videoId) || undefined}
-                  title={youtubePreview.title}
-                  className="h-full w-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
+              {youtubePreviewStream?.streamUrl ? (
+                <video
+                  key={youtubePreviewStream.streamUrl}
+                  src={youtubePreviewStream.streamUrl}
+                  controls
+                  autoPlay
+                  playsInline
+                  poster={youtubePreview.videoId ? `https://img.youtube.com/vi/${youtubePreview.videoId}/hqdefault.jpg` : undefined}
+                  className="h-full w-full bg-black object-contain"
+                  onError={() => setYoutubePreviewMessage('O stream temporário expirou ou foi bloqueado pelo YouTube. Tente abrir a prévia novamente.')}
                 />
               ) : (
-                <div className="flex h-full items-center justify-center px-8 text-center text-sm text-gray-400">
-                  Não foi possível montar a prévia deste vídeo.
+                <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center text-sm text-gray-400">
+                  {isYoutubePreviewLoading ? <LoaderCircle size={32} className="animate-spin text-cyan-300" /> : <Video size={34} className="text-gray-500" />}
+                  <p>{youtubePreviewMessage || 'Preparando reprodução direta pelo YouTube...'}</p>
                 </div>
               )}
+            </div>
+            <div className="border-t border-white/10 px-5 py-4">
+              <p className="text-xs leading-5 text-gray-400">
+                {youtubePreviewMessage || 'Prévia carregada diretamente do YouTube em um player nativo do MusFy.'}
+              </p>
             </div>
           </div>
         </div>

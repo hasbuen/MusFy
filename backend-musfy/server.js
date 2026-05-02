@@ -962,6 +962,25 @@ app.post('/youtube/search', async (req, res) => {
   }
 });
 
+app.post('/youtube/preview', async (req, res) => {
+  try {
+    const url = String(req.body?.url || '').trim();
+
+    if (!url) {
+      return res.status(400).json({ error: 'URL obrigatoria para abrir a previa.' });
+    }
+
+    const preview = await resolveYoutubePreviewStream(url);
+    return res.json({
+      success: true,
+      preview
+    });
+  } catch (err) {
+    addLog(`[preview] Falha ao abrir previa do YouTube: ${err.message}`);
+    return res.status(500).json({ error: err.message || 'Falha ao abrir previa do YouTube.' });
+  }
+});
+
 app.get('/devices', (req, res) => {
   const excludeDeviceId = req.query.excludeDeviceId ? String(req.query.excludeDeviceId) : null;
   const userId = req.query.userId ? String(req.query.userId) : null;
@@ -2507,6 +2526,89 @@ async function searchYoutube(query) {
     ...cacheEntry,
     source: runtimeServices?.getActiveRedisUrl() ? 'origin+redis' : runtimeServices ? 'origin+sqlite' : 'origin'
   };
+}
+
+async function resolveYoutubePreviewStream(url) {
+  if (!fs.existsSync(YTDLP_PATH)) {
+    throw new Error(`yt-dlp nao encontrado em ${YTDLP_PATH}`);
+  }
+
+  const normalizedUrl = getYoutubeWatchUrl(getVideoId(url) || url) || String(url || '').trim();
+  let args = appendYtDlpCookieFileArgs([
+    normalizedUrl,
+    '-f',
+    'b[ext=mp4][vcodec!=none][acodec!=none][height<=720]/b[vcodec!=none][acodec!=none][height<=720]/best[vcodec!=none][acodec!=none]',
+    '--no-playlist',
+    '--no-warnings',
+    '--no-check-certificate',
+    '--socket-timeout',
+    '20',
+    '--get-url',
+    '--get-title'
+  ]);
+
+  if (fs.existsSync(NODE_RUNTIME_PATH)) {
+    args = [...args, '--js-runtimes', `node:${NODE_RUNTIME_PATH}`];
+  }
+
+  return await new Promise((resolve, reject) => {
+    const ytdlp = spawn(YTDLP_PATH, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    const timeout = setTimeout(() => {
+      ytdlp.kill('SIGKILL');
+      reject(new Error('A previa demorou demais para responder.'));
+    }, 25000);
+
+    ytdlp.stdout.on('data', (data) => {
+      stdoutBuffer += data.toString();
+    });
+
+    ytdlp.stderr.on('data', (data) => {
+      stderrBuffer += data.toString();
+    });
+
+    ytdlp.on('error', (err) => {
+      clearTimeout(timeout);
+      reject(new Error(`Falha ao iniciar previa do YouTube: ${err.message}`));
+    });
+
+    ytdlp.on('close', (code) => {
+      clearTimeout(timeout);
+
+      const lines = stdoutBuffer
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const streamUrl = lines.find((line) => /^https?:\/\//i.test(line));
+      const title = lines.find((line) => !/^https?:\/\//i.test(line)) || null;
+
+      if (!streamUrl) {
+        const stderrSummary = stderrBuffer.split(/\r?\n/).filter(Boolean).slice(-5).join(' | ');
+        return reject(
+          new Error(
+            stderrSummary ||
+              (code !== 0
+                ? `Nao foi possivel obter a previa do YouTube (codigo ${code}).`
+                : 'O YouTube nao entregou uma URL de previa compativel.')
+          )
+        );
+      }
+
+      addLog(`[preview] Stream temporario resolvido para ${title || normalizedUrl}`);
+      resolve({
+        url: normalizedUrl,
+        title,
+        streamUrl,
+        mimeType: 'video/mp4',
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      });
+    });
+  });
 }
 
 async function fetchYoutubeSingleMetadata(url, jobId = null) {

@@ -798,7 +798,7 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.18</strong>
+              <strong id="release-version">0.1.19</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
@@ -923,16 +923,16 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.18</h3>
+            <h3 id="release-name">MusFy 0.1.19</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
             </p>
             <ul id="release-notes-list">
-              <li>Corrige o modal de acoes dos resultados do YouTube para nao piscar.</li>
-              <li>Garante que downloads iniciados pelo modal nao sejam sobrescritos pela analise do link.</li>
-              <li>Adiciona previa incorporada do YouTube dentro do app para assistir ou ouvir antes de baixar.</li>
-              <li>Separa nos cards as acoes de assistir agora e abrir opcoes de download.</li>
+              <li>Troca a previa embedada do YouTube por reproducao nativa dentro do MusFy.</li>
+              <li>Adiciona endpoint local para resolver um stream temporario de previa via yt-dlp.</li>
+              <li>Evita o erro 153 do player embedado do YouTube no Electron empacotado.</li>
+              <li>Mantem as acoes de download disponiveis quando a previa nao puder ser reproduzida.</li>
             </ul>
           </article>
 
@@ -1022,18 +1022,18 @@
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.18",
-        name: "MusFy 0.1.18",
+        version: "0.1.19",
+        name: "MusFy 0.1.19",
         size: 209324280,
         publishedAt: "2026-03-31T17:06:54.652Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Corrige o modal de acoes dos resultados do YouTube para nao piscar.",
-          "Garante que downloads iniciados pelo modal nao sejam sobrescritos pela analise do link.",
-          "Adiciona previa incorporada do YouTube dentro do app para assistir ou ouvir antes de baixar.",
-          "Separa nos cards as acoes de assistir agora e abrir opcoes de download."
+          "Troca a previa embedada do YouTube por reproducao nativa dentro do MusFy.",
+          "Adiciona endpoint local para resolver um stream temporario de previa via yt-dlp.",
+          "Evita o erro 153 do player embedado do YouTube no Electron empacotado.",
+          "Mantem as acoes de download disponiveis quando a previa nao puder ser reproduzida."
         ]
       };
 
