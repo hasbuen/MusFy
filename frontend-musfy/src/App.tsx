@@ -56,6 +56,7 @@ interface Song {
   audioMimeType?: string | null;
   videoPath?: string | null;
   videoMimeType?: string | null;
+  hasAudio?: boolean;
   hasVideo?: boolean;
 }
 
@@ -921,6 +922,20 @@ export default function App() {
   const getActiveMediaElement = () =>
     playbackModeRef.current === 'video' && currentSong?.hasVideo ? videoRef.current : audioRef.current;
 
+  const ensurePlaybackEndpointAvailable = async (url: string, unavailableMessage: string) => {
+    try {
+      const response = await fetch(url, { method: 'HEAD' });
+      if (!response.ok) {
+        throw new Error(unavailableMessage);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === unavailableMessage) {
+        throw error;
+      }
+      throw new Error('Servidor local indisponivel. Verifique se o MusFy esta aberto e tente novamente.');
+    }
+  };
+
   const getPlaybackUrl = async (song: Song, mode: PlaybackMode) => {
     if (mode === 'audio') {
       const store = await getOfflineAudioStore();
@@ -931,14 +946,18 @@ export default function App() {
         return objectUrlRef.current;
       }
 
-      return `${api.defaults.baseURL}/reproduzir-musica/${song.id}`;
+      const playbackUrl = `${api.defaults.baseURL}/reproduzir-musica/${song.id}`;
+      await ensurePlaybackEndpointAvailable(playbackUrl, 'Arquivo de audio indisponivel para esta faixa.');
+      return playbackUrl;
     }
 
     if (!song.hasVideo) {
       throw new Error('Esta faixa nao possui video salvo');
     }
 
-    return `${api.defaults.baseURL}/reproduzir-video/${song.id}`;
+    const playbackUrl = `${api.defaults.baseURL}/reproduzir-video/${song.id}`;
+    await ensurePlaybackEndpointAvailable(playbackUrl, 'Video indisponivel para esta faixa.');
+    return playbackUrl;
   };
 
   const loadDownloadJobs = async () => {
@@ -1962,11 +1981,16 @@ export default function App() {
     options?: {
       preferredMode?: PlaybackMode;
       forceReload?: boolean;
+      allowVideoFallback?: boolean;
     }
   ) => {
     const preferredMode = options?.preferredMode || playbackModeRef.current;
     const forceReload = Boolean(options?.forceReload);
-    const targetMode: PlaybackMode = preferredMode === 'video' && song.hasVideo ? 'video' : 'audio';
+    const allowVideoFallback = options?.allowVideoFallback !== false;
+    const targetMode: PlaybackMode =
+      (preferredMode === 'video' && song.hasVideo) || (preferredMode === 'audio' && song.hasAudio === false && song.hasVideo)
+        ? 'video'
+        : 'audio';
     const activeElement = targetMode === 'video' ? videoRef.current : audioRef.current;
     const inactiveElement = targetMode === 'video' ? audioRef.current : videoRef.current;
 
@@ -2017,10 +2041,23 @@ export default function App() {
       await sendDeviceState('playing', { currentSong: song, currentTime: 0 });
     } catch (error) {
       console.error(error);
-      if (targetMode === 'audio' && !offlineSongIds.includes(song.id)) {
-      setPlayerNotice('Servidor indisponível. Esta faixa não está salva offline e não pode ser reproduzida agora.');
+      if (targetMode === 'audio' && song.hasVideo && allowVideoFallback) {
+        setPlayerNotice('Audio indisponivel. Abrindo o video salvo desta faixa.');
+        try {
+          await executePlaySong(song, { preferredMode: 'video', forceReload: true, allowVideoFallback: false });
+          return;
+        } catch (fallbackError) {
+          console.error(fallbackError);
+          setPlayerNotice(
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : 'Nao foi possivel reproduzir o audio nem o video desta faixa.'
+          );
+        }
+      } else if (targetMode === 'audio' && !offlineSongIds.includes(song.id)) {
+        setPlayerNotice(error instanceof Error ? error.message : 'Nao foi possivel reproduzir esta faixa.');
       } else if (targetMode === 'video') {
-        setPlayerNotice('Vídeo indisponível sem o backend ativo.');
+        setPlayerNotice(error instanceof Error ? error.message : 'Video indisponivel para esta faixa.');
       } else {
         setPlayerNotice(error instanceof Error ? error.message : 'Falha ao reproduzir faixa.');
       }

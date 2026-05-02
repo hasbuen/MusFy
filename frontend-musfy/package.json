@@ -1,7 +1,7 @@
 {
   "name": "frontend-musfy",
   "private": true,
-  "version": "0.1.19",
+  "version": "0.1.20",
   "description": "MusFy desktop player with library sync, mini player, tray mode, video playback, and GitHub-powered updates",
   "author": "MusFy",
   "repository": {

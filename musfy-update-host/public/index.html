@@ -798,15 +798,15 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.19</strong>
+              <strong id="release-version">0.1.20</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
-              <strong id="release-size">199.6 MB</strong>
+              <strong id="release-size">197.2 MB</strong>
             </div>
             <div class="release-card">
               <label>Disponibilidade</label>
-              <strong id="release-date">31 mar 2026</strong>
+              <strong id="release-date">2 mai 2026</strong>
             </div>
           </div>
         </div>
@@ -923,7 +923,7 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.19</h3>
+            <h3 id="release-name">MusFy 0.1.20</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
@@ -1022,18 +1022,18 @@
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.19",
-        name: "MusFy 0.1.19",
-        size: 209324280,
-        publishedAt: "2026-03-31T17:06:54.652Z",
+        version: "0.1.20",
+        name: "MusFy 0.1.20",
+        size: 206729025,
+        publishedAt: "2026-05-02T15:25:02.442Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Troca a previa embedada do YouTube por reproducao nativa dentro do MusFy.",
-          "Adiciona endpoint local para resolver um stream temporario de previa via yt-dlp.",
-          "Evita o erro 153 do player embedado do YouTube no Electron empacotado.",
-          "Mantem as acoes de download disponiveis quando a previa nao puder ser reproduzida."
+          "Corrige a reproducao de faixas sem audio local quando o video salvo esta disponivel.",
+          "Evita o aviso incorreto de servidor indisponivel quando o problema e o arquivo de audio.",
+          "Valida o stream local antes de acionar o player e mostra mensagens mais precisas.",
+          "Mantem a biblioteca utilizavel ao alternar automaticamente para o video salvo."
         ]
       };
 

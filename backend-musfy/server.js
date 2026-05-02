@@ -2077,6 +2077,7 @@ function normalizeMusicRecord(music) {
     audioMimeType: music.audioMimeType || null,
     videoPath: music.videoPath || null,
     videoMimeType: music.videoMimeType || null,
+    hasAudio: Boolean(music.path),
     hasVideo: Boolean(music.videoPath),
     ownerUserId: music.ownerUserId || null,
     uploadedByUserId,
