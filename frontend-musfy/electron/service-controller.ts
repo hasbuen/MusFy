@@ -274,14 +274,14 @@ export class MusfyServiceController {
     }
 
     if (app.isPackaged) {
-      const bundledNode = path.join(process.resourcesPath, 'runtime', 'node.exe');
+      const bundledNode = path.join(process.resourcesPath, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node');
       if (!fs.existsSync(bundledNode)) {
         throw new Error(`Runtime Node do MusFy nao encontrado em ${bundledNode}`);
       }
 
       this.childProcess = spawn(bundledNode, [backendEntry], {
         cwd: path.dirname(backendEntry),
-        windowsHide: true,
+        windowsHide: process.platform === 'win32',
         detached: false,
         stdio: 'ignore',
         env: {

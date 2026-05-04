@@ -22,6 +22,10 @@ assertContains("'libmp3lame'", 'MP3 encoder');
 assertContains("'aac'", 'AAC encoder');
 assertContains("'slow'", 'higher quality video backup preset');
 assertContains("'0'", 'highest LAME quality flag');
+assertContains(
+  "path.join(__dirname, 'dependencies', 'yt-dlp-exec', 'bin', 'yt-dlp')",
+  'Linux yt-dlp dependency fallback'
+);
 
 assertNotContains("'16000'", '16kHz OPUS sample rate');
 assertNotContains("'16k'", '16k OPUS bitrate');

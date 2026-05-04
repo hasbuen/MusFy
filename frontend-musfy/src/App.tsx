@@ -749,6 +749,8 @@ export default function App() {
   const desktopUpdateNotesRef = useRef<HTMLDivElement | null>(null);
   const desktopUpdateFocusTimerRef = useRef<number | null>(null);
   const youtubeSelectionRequestIdRef = useRef(0);
+  const completedDownloadJobIdsRef = useRef<Set<string>>(new Set());
+  const libraryRefreshInFlightRef = useRef(false);
 
   const desktopApi = {
     minimizeToTray: async () => {
@@ -874,6 +876,26 @@ export default function App() {
     setDiscoverPlaylists(sanitizeDeepText(Array.isArray(res.data) ? res.data : []));
   };
 
+  const refreshLibraryAfterDownload = async (reason = 'download') => {
+    if (libraryRefreshInFlightRef.current) return;
+    libraryRefreshInFlightRef.current = true;
+
+    try {
+      await Promise.all([
+        loadSongs(activeSection, currentUser),
+        loadPlaylists(currentUser),
+        loadDiscoverPlaylists(currentUser)
+      ]);
+
+      if (reason === 'completed-job') {
+        setPlaylistMessage('');
+        setDownloadMessage('Biblioteca atualizada com o download concluído.');
+      }
+    } finally {
+      libraryRefreshInFlightRef.current = false;
+    }
+  };
+
   const loadActivityLogs = async () => {
     const res = await api.get('/logs');
     const nextLogs = sanitizeDeepText(Array.isArray(res.data) ? (res.data as string[]) : []);
@@ -984,7 +1006,16 @@ export default function App() {
 
   const loadDownloadJobs = async () => {
     const res = await api.get('/downloads/status');
-    setDownloadJobs(sanitizeDeepText(Array.isArray(res.data) ? (res.data as DownloadJob[]) : []));
+    const nextJobs = sanitizeDeepText(Array.isArray(res.data) ? (res.data as DownloadJob[]) : []);
+    const completedJobs = nextJobs.filter((job) => job.id && job.status === 'completed');
+    const hasNewCompletedJob = completedJobs.some((job) => !completedDownloadJobIdsRef.current.has(job.id));
+
+    completedJobs.forEach((job) => completedDownloadJobIdsRef.current.add(job.id));
+    setDownloadJobs(nextJobs);
+
+    if (hasNewCompletedJob && currentUser) {
+      void refreshLibraryAfterDownload('completed-job');
+    }
   };
 
   const loadDesktopPreferences = async () => {
@@ -1328,17 +1359,21 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [showActivityPanel, isDownloading, backendAvailable]);
 
+  const hasUnfinishedDownloadJobs = downloadJobs.some((job) =>
+    ['queued', 'running', 'paused'].includes(job.status)
+  );
+
   useEffect(() => {
-    if (activeSection !== 'download' && !isDownloading) return;
-    if (!backendAvailable) return;
+    if (!backendAvailable || !currentUser) return;
+    if (activeSection !== 'download' && !isDownloading && !hasUnfinishedDownloadJobs) return;
 
     loadDownloadJobs().catch(console.error);
     const interval = window.setInterval(() => {
       loadDownloadJobs().catch(console.error);
-    }, 1200);
+    }, activeSection === 'download' || isDownloading ? 1200 : 2500);
 
     return () => window.clearInterval(interval);
-  }, [activeSection, isDownloading, backendAvailable]);
+  }, [activeSection, isDownloading, backendAvailable, currentUser, hasUnfinishedDownloadJobs]);
 
   useEffect(() => {
     if (isMiniMode || activeSection !== 'download' || !backendAvailable) return;
@@ -2827,9 +2862,8 @@ export default function App() {
       const importedSongs = Array.isArray(res.data?.songs) ? (res.data.songs as Song[]) : [];
       const skippedEntries = Array.isArray(res.data?.skippedEntries) ? res.data.skippedEntries : [];
 
-      await loadSongs(activeSection, currentUser);
-      await loadPlaylists(currentUser);
-      await loadDiscoverPlaylists(currentUser);
+      await refreshLibraryAfterDownload('download');
+      setPlaylistMessage('');
 
       if (resetComposer) {
         setYoutubeUrl('');

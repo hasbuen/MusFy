@@ -28,6 +28,7 @@ frontend-musfy/release/
 frontend-musfy/release-*/
 !frontend-musfy/release-notes/
 !frontend-musfy/release-notes/**
+frontend-musfy/build/backend-musfy/
 frontend-musfy/build/runtime/
 frontend-musfy/build/installerSidebar.bmp
 frontend-musfy/build/uninstallerSidebar.bmp
@@ -54,3 +55,4 @@ backend-musfy/opus_files/
 backend-musfy/tmp-redis/
 backend-musfy/video_files/
 musfy-update-host/public/windows/
+musfy-update-host/public/linux/

@@ -305,7 +305,27 @@ function collectArtifacts(targetDir, version, extraArtifacts = []) {
     fail(`latest.yml foi gerado sem a versao esperada ${version}.`);
   }
 
-  return [...artifacts, ...extraArtifacts];
+  return [...artifacts, ...collectOptionalLinuxArtifacts(targetDir, version), ...extraArtifacts];
+}
+
+function collectOptionalLinuxArtifacts(targetDir, version) {
+  return [
+    `MusFy-Linux-${version}.AppImage`,
+    `MusFy-Linux-${version}.tar.gz`,
+    'latest-linux.yml'
+  ]
+    .map((fileName) => {
+      const filePath = path.join(targetDir, fileName);
+      if (!fs.existsSync(filePath)) return null;
+
+      return {
+        name: fileName,
+        filePath,
+        contentType: getContentType(fileName),
+        size: fs.statSync(filePath).size
+      };
+    })
+    .filter(Boolean);
 }
 
 function prepareAndroidApkArtifact({ args, outputDir }) {
@@ -360,6 +380,8 @@ function resolveAndroidApkSource(args) {
 
 function getContentType(fileName) {
   if (fileName.endsWith('.yml')) return 'text/yaml; charset=utf-8';
+  if (fileName.endsWith('.AppImage')) return 'application/x-executable';
+  if (fileName.endsWith('.tar.gz')) return 'application/gzip';
   if (fileName.endsWith('.blockmap')) return 'application/octet-stream';
   if (fileName.endsWith('.exe')) return 'application/vnd.microsoft.portable-executable';
   return 'application/octet-stream';

@@ -40,6 +40,8 @@ function resolveCscPath() {
 
 function buildWindowsServiceHost() {
   if (process.platform !== 'win32') {
+    fs.mkdirSync(path.dirname(serviceHostTarget), { recursive: true });
+    fs.writeFileSync(serviceHostTarget, 'Windows service host is only used by the Windows package.\n');
     return;
   }
 

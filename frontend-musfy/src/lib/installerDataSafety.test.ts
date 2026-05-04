@@ -56,6 +56,14 @@ describe('installer data safety', () => {
     expect(prepareRuntime).not.toContain("'ffmpeg'\\n  ]");
   });
 
+  it('uses platform-specific runtime names for desktop packages', () => {
+    const serviceController = fs.readFileSync(path.join(repoRoot, 'electron', 'service-controller.ts'), 'utf-8');
+    const prepareRuntime = fs.readFileSync(prepareRuntimeScriptPath, 'utf-8');
+
+    expect(serviceController).toContain("process.platform === 'win32' ? 'node.exe' : 'node'");
+    expect(prepareRuntime).toContain("process.platform === 'win32' ? 'node.exe' : 'node'");
+  });
+
   it('points the Windows service host to bundled backend dependencies', () => {
     const serviceHost = fs.readFileSync(serviceHostSourcePath, 'utf-8');
 

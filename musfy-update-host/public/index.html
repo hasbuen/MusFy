@@ -788,7 +788,10 @@
 
           <div class="cta-row">
             <a id="download-button" class="button button-primary" href="https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Setup.exe" target="_blank" rel="noreferrer">
-              Baixar instalador
+              Baixar Windows
+            </a>
+            <a id="linux-download-button" class="button button-secondary" href="https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Linux-0.1.27.tar.gz" target="_blank" rel="noreferrer">
+              Baixar Linux
             </a>
             <a id="release-button" class="button button-secondary" href="https://github.com/hasbuen/MusFy/releases/latest" target="_blank" rel="noreferrer">
               Ver release
@@ -798,11 +801,11 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.26</strong>
+              <strong id="release-version">0.1.27</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
-              <strong id="release-size">197.2 MB</strong>
+              <strong id="release-size">218.5 MB</strong>
             </div>
             <div class="release-card">
               <label>Disponibilidade</label>
@@ -923,7 +926,7 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.26</h3>
+            <h3 id="release-name">MusFy 0.1.27</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
@@ -1018,24 +1021,29 @@
       const repoUrl = `https://github.com/${repoOwner}/${repoName}`;
       const latestReleaseUrl = `${repoUrl}/releases/latest`;
       const latestDownloadUrl = `${latestReleaseUrl}/download/MusFy-Setup.exe`;
+      const latestLinuxDownloadUrl = `${latestReleaseUrl}/download/MusFy-Linux-0.1.27.tar.gz`;
       const latestReleaseApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`;
       const localLatestYmlUrl = new URL("./windows/latest.yml", window.location.href).toString();
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
+      const localLatestLinuxYmlUrl = new URL("./linux/latest-linux.yml", window.location.href).toString();
+      const localLinuxPackageUrl = new URL("./linux/MusFy-Linux-0.1.27.tar.gz", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.26",
-        name: "MusFy 0.1.26",
-        size: 229117852,
-        publishedAt: "2026-05-04T16:26:32.825Z",
+        version: "0.1.27",
+        name: "MusFy 0.1.27",
+        size: 229117330,
+        linuxSize: 243514937,
+        publishedAt: "2026-05-04T17:26:18.635Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
+        linuxDownloadUrl: latestLinuxDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Converte downloads para OPUS 48 kHz stereo em 320k.",
-          "Remove a conversao antiga de 16 kHz mono.",
-          "Exporta backups MP3 em 320k com LAME no maximo.",
-          "Melhora audio de backups MP4/AAC e AVI/MP3 para 320k.",
-          "Adiciona navegador de playlist para assistir/ouvir faixas antes de baixar."
+          "Atualiza musicas e playlists assim que a fila conclui o download e a conversao.",
+          "Remove a necessidade de trocar usuario ou entrar de novo para ver playlists importadas.",
+          "Mantem a observacao da fila ativa quando existem downloads pendentes em segundo plano.",
+          "Inclui pacote Linux tar.gz com runtime Node, ffmpeg e yt-dlp para Linux.",
+          "Adiciona testes para impedir regressao nesse refresh automatico."
         ]
       };
 
@@ -1073,6 +1081,7 @@
         const notes = Array.isArray(release.notes) && release.notes.length ? release.notes : fallbackRelease.notes;
         const sizeLabel = typeof release.size === "number" ? formatBytes(release.size) : formatBytes(fallbackRelease.size);
         const downloadUrl = release.downloadUrl || fallbackRelease.downloadUrl;
+        const linuxDownloadUrl = release.linuxDownloadUrl || fallbackRelease.linuxDownloadUrl;
         const releaseUrl = release.releaseUrl || fallbackRelease.releaseUrl;
 
         document.getElementById("release-version").textContent = versionLabel;
@@ -1082,6 +1091,7 @@
         document.getElementById("release-asset-name").textContent = assetName;
         document.getElementById("release-status").textContent = `Ultimo release: ${versionLabel}`;
         document.getElementById("download-button").href = downloadUrl;
+        document.getElementById("linux-download-button").href = linuxDownloadUrl;
         document.getElementById("secondary-download-button").href = downloadUrl;
         document.getElementById("release-button").href = releaseUrl;
         document.title = `${releaseName} | Baixe o player desktop`;
@@ -1117,7 +1127,16 @@
           notes,
           assetName: "MusFy-Setup.exe",
           downloadUrl: localInstallerUrl,
+          linuxDownloadUrl: localLinuxPackageUrl,
           releaseUrl: latestReleaseUrl
+        };
+      }
+
+      function parseLatestLinuxYml(text) {
+        const size = Number((text.match(/^\s+size:\s*(\d+)/m) || [])[1] || "0");
+        return {
+          size,
+          downloadUrl: localLinuxPackageUrl
         };
       }
 
@@ -1132,15 +1151,20 @@
           const installer = Array.isArray(release.assets)
             ? release.assets.find((asset) => asset && asset.name === "MusFy-Setup.exe")
             : null;
+          const linuxPackage = Array.isArray(release.assets)
+            ? release.assets.find((asset) => asset && asset.name === `MusFy-Linux-${String(release.tag_name || "").replace(/^v/, "")}.tar.gz`)
+            : null;
 
           renderRelease({
             version: String(release.tag_name || "").replace(/^v/, "") || fallbackRelease.version,
             name: release.name || fallbackRelease.name,
             size: installer ? installer.size : fallbackRelease.size,
+            linuxSize: linuxPackage ? linuxPackage.size : fallbackRelease.linuxSize,
             publishedAt: release.published_at || fallbackRelease.publishedAt,
             notes: normalizeNotes(release.body),
             assetName: installer ? installer.name : fallbackRelease.assetName,
             downloadUrl: installer ? installer.browser_download_url : fallbackRelease.downloadUrl,
+            linuxDownloadUrl: linuxPackage ? linuxPackage.browser_download_url : fallbackRelease.linuxDownloadUrl,
             releaseUrl: release.html_url || fallbackRelease.releaseUrl
           });
           return;
@@ -1152,7 +1176,19 @@
           const response = await fetch(localLatestYmlUrl, { cache: "no-store" });
           if (!response.ok) throw new Error(`latest.yml ${response.status}`);
           const latestYml = await response.text();
-          renderRelease(parseLatestYml(latestYml));
+          let localRelease = parseLatestYml(latestYml);
+          try {
+            const linuxResponse = await fetch(localLatestLinuxYmlUrl, { cache: "no-store" });
+            if (linuxResponse.ok) {
+              const linuxYml = await linuxResponse.text();
+              localRelease = {
+                ...localRelease,
+                linuxSize: parseLatestLinuxYml(linuxYml).size,
+                linuxDownloadUrl: parseLatestLinuxYml(linuxYml).downloadUrl
+              };
+            }
+          } catch (_linuxError) {}
+          renderRelease(localRelease);
           return;
         } catch (_error) {
           renderRelease(fallbackRelease);

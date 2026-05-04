@@ -30,7 +30,10 @@ function getFfmpegPath() {
     } catch (error) {
       const fallbackCandidates = [
         path.join(__dirname, 'dependencies', '@ffmpeg-installer', 'win32-x64', 'ffmpeg.exe'),
-        path.join(__dirname, 'node_modules', '@ffmpeg-installer', 'win32-x64', 'ffmpeg.exe')
+        path.join(__dirname, 'dependencies', '@ffmpeg-installer', 'linux-x64', 'ffmpeg'),
+        path.join(__dirname, 'node_modules', '@ffmpeg-installer', 'win32-x64', 'ffmpeg.exe'),
+        path.join(__dirname, 'node_modules', '@ffmpeg-installer', 'linux-x64', 'ffmpeg'),
+        'ffmpeg'
       ];
       ffmpegPathCache = fallbackCandidates.find((candidate) => fs.existsSync(candidate));
 
@@ -130,7 +133,13 @@ function resolveYtDlpPath() {
     path.join(__dirname, 'bin', 'yt-dlp.exe'),
     path.join(__dirname, 'bin', 'yt-dlp'),
     path.join(__dirname, 'yt-dlp.exe'),
-    path.join(__dirname, 'yt-dlp')
+    path.join(__dirname, 'yt-dlp'),
+    path.join(__dirname, 'dependencies', 'yt-dlp-exec', 'bin', 'yt-dlp.exe'),
+    path.join(__dirname, 'dependencies', 'yt-dlp-exec', 'bin', 'yt-dlp'),
+    path.join(__dirname, 'dependencies', 'youtube-dl-exec', 'bin', 'yt-dlp.exe'),
+    path.join(__dirname, 'dependencies', 'youtube-dl-exec', 'bin', 'yt-dlp'),
+    path.join(__dirname, 'node_modules', 'yt-dlp-exec', 'bin', 'yt-dlp.exe'),
+    path.join(__dirname, 'node_modules', 'yt-dlp-exec', 'bin', 'yt-dlp')
   ];
 
   for (const candidate of candidates) {
