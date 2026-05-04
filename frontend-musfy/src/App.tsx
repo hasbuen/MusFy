@@ -876,6 +876,14 @@ export default function App() {
     setDiscoverPlaylists(sanitizeDeepText(Array.isArray(res.data) ? res.data : []));
   };
 
+  const openBrowserClient = async () => {
+    const browserUrl = `${String(api.defaults.baseURL || 'http://127.0.0.1:3001').replace(/\/$/, '')}/`;
+    const openedExternally = await desktopApi.openExternal(browserUrl);
+    if (!openedExternally) {
+      window.open(browserUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   const refreshLibraryAfterDownload = async (reason = 'download') => {
     if (libraryRefreshInFlightRef.current) return;
     libraryRefreshInFlightRef.current = true;
@@ -3467,6 +3475,13 @@ export default function App() {
                   {authMode === 'login'
                     ? 'Primeira vez? Criar novo usuário'
                     : 'Já possui usuário? Entrar'}
+                </button>
+
+                <button
+                  onClick={() => void openBrowserClient()}
+                  className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-gray-300 transition hover:border-cyan-400/40 hover:text-white"
+                >
+                  Abrir MusFy no navegador
                 </button>
 
                 {authMessage ? <p className="text-sm text-gray-400">{authMessage}</p> : null}

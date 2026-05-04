@@ -64,6 +64,14 @@ describe('installer data safety', () => {
     expect(prepareRuntime).toContain("process.platform === 'win32' ? 'node.exe' : 'node'");
   });
 
+  it('starts packaged backend with bundled dependencies outside the Windows service host', () => {
+    const serviceController = fs.readFileSync(path.join(repoRoot, 'electron', 'service-controller.ts'), 'utf-8');
+
+    expect(serviceController).toContain("path.join(path.dirname(backendEntry), 'dependencies')");
+    expect(serviceController).toContain('NODE_PATH: backendDependenciesDir');
+    expect(serviceController).toContain("path.join(path.dirname(resolveRuntimeStatePath()), 'backend.log')");
+  });
+
   it('points the Windows service host to bundled backend dependencies', () => {
     const serviceHost = fs.readFileSync(serviceHostSourcePath, 'utf-8');
 

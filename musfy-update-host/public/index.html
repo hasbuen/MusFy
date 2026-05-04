@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
@@ -790,7 +790,7 @@
             <a id="download-button" class="button button-primary" href="https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Setup.exe" target="_blank" rel="noreferrer">
               Baixar Windows
             </a>
-            <a id="linux-download-button" class="button button-secondary" href="https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Linux-0.1.27.tar.gz" target="_blank" rel="noreferrer">
+            <a id="linux-download-button" class="button button-secondary" href="https://github.com/hasbuen/MusFy/releases/latest/download/MusFy-Linux-0.1.28.tar.gz" target="_blank" rel="noreferrer">
               Baixar Linux
             </a>
             <a id="release-button" class="button button-secondary" href="https://github.com/hasbuen/MusFy/releases/latest" target="_blank" rel="noreferrer">
@@ -801,7 +801,7 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.27</strong>
+              <strong id="release-version">0.1.28</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
@@ -926,17 +926,17 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.27</h3>
+            <h3 id="release-name">MusFy 0.1.28</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
             </p>
             <ul id="release-notes-list">
-              <li>Converte downloads para OPUS 48 kHz stereo em 320k.</li>
-              <li>Remove a conversao antiga de 16 kHz mono.</li>
-              <li>Exporta backups MP3 em 320k com LAME no maximo.</li>
-              <li>Melhora audio de backups MP4/AAC e AVI/MP3 para 320k.</li>
-              <li>Adiciona navegador de playlist para assistir/ouvir faixas antes de baixar.</li>
+              <li>Corrige a inicializacao do servico local no Linux.</li>
+              <li>Adiciona atalho para abrir o MusFy direto no navegador.</li>
+              <li>Grava backend.log para diagnosticar falhas do servico local.</li>
+              <li>Mantem pacote Linux tar.gz com runtime Node, ffmpeg e yt-dlp.</li>
+              <li>Adiciona testes para o bootstrap Linux e entrada pelo navegador.</li>
             </ul>
           </article>
 
@@ -1021,29 +1021,29 @@
       const repoUrl = `https://github.com/${repoOwner}/${repoName}`;
       const latestReleaseUrl = `${repoUrl}/releases/latest`;
       const latestDownloadUrl = `${latestReleaseUrl}/download/MusFy-Setup.exe`;
-      const latestLinuxDownloadUrl = `${latestReleaseUrl}/download/MusFy-Linux-0.1.27.tar.gz`;
+      const latestLinuxDownloadUrl = `${latestReleaseUrl}/download/MusFy-Linux-0.1.28.tar.gz`;
       const latestReleaseApiUrl = `https://api.github.com/repos/${repoOwner}/${repoName}/releases/latest`;
       const localLatestYmlUrl = new URL("./windows/latest.yml", window.location.href).toString();
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
       const localLatestLinuxYmlUrl = new URL("./linux/latest-linux.yml", window.location.href).toString();
-      const localLinuxPackageUrl = new URL("./linux/MusFy-Linux-0.1.27.tar.gz", window.location.href).toString();
+      const localLinuxPackageUrl = new URL("./linux/MusFy-Linux-0.1.28.tar.gz", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.27",
-        name: "MusFy 0.1.27",
-        size: 229117330,
-        linuxSize: 243514937,
-        publishedAt: "2026-05-04T17:26:18.635Z",
+        version: "0.1.28",
+        name: "MusFy 0.1.28",
+        size: 229117575,
+        linuxSize: 243514229,
+        publishedAt: "2026-05-04T19:37:23.269Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         linuxDownloadUrl: latestLinuxDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Atualiza musicas e playlists assim que a fila conclui o download e a conversao.",
-          "Remove a necessidade de trocar usuario ou entrar de novo para ver playlists importadas.",
-          "Mantem a observacao da fila ativa quando existem downloads pendentes em segundo plano.",
-          "Inclui pacote Linux tar.gz com runtime Node, ffmpeg e yt-dlp para Linux.",
-          "Adiciona testes para impedir regressao nesse refresh automatico."
+          "Corrige a inicializacao do servico local no Linux.",
+          "Adiciona atalho para abrir o MusFy direto no navegador.",
+          "Grava backend.log para diagnosticar falhas do servico local.",
+          "Mantem pacote Linux tar.gz com runtime Node, ffmpeg e yt-dlp.",
+          "Adiciona testes para o bootstrap Linux e entrada pelo navegador."
         ]
       };
 
@@ -1200,3 +1200,4 @@
     </script>
   </body>
 </html>
+

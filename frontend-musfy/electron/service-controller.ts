@@ -116,6 +116,10 @@ function writeRuntimeState(config: ServiceConfig, source: 'managed' | 'external'
   } catch {}
 }
 
+function resolveBackendLogPath() {
+  return path.join(path.dirname(resolveRuntimeStatePath()), 'backend.log');
+}
+
 async function checkHealth(url: string) {
   try {
     const response = await fetch(url, { method: 'GET' });
@@ -279,13 +283,23 @@ export class MusfyServiceController {
         throw new Error(`Runtime Node do MusFy nao encontrado em ${bundledNode}`);
       }
 
+      if (process.platform !== 'win32') {
+        fs.chmodSync(bundledNode, 0o755);
+      }
+
+      const backendDependenciesDir = path.join(path.dirname(backendEntry), 'dependencies');
+      const backendLogPath = resolveBackendLogPath();
+      fs.mkdirSync(path.dirname(backendLogPath), { recursive: true });
+      const backendLogStream = fs.createWriteStream(backendLogPath, { flags: 'a' });
+
       this.childProcess = spawn(bundledNode, [backendEntry], {
         cwd: path.dirname(backendEntry),
         windowsHide: process.platform === 'win32',
         detached: false,
-        stdio: 'ignore',
+        stdio: ['ignore', backendLogStream, backendLogStream],
         env: {
           ...process.env,
+          NODE_PATH: backendDependenciesDir,
           HOST: DEFAULT_BIND_HOST,
           PORT: String(this.config.port),
           MUSFY_SERVICE_MODE: 'local-service',
@@ -294,6 +308,7 @@ export class MusfyServiceController {
       });
 
       this.childProcess.once('exit', () => {
+        backendLogStream.end();
         this.childProcess = null;
       });
 
