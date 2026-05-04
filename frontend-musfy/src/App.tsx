@@ -3008,7 +3008,10 @@ export default function App() {
   };
 
   const submitAuth = async () => {
-    if (!authLogin.trim() || !authPassword.trim()) {
+    const identity = authLogin.trim();
+    const password = authPassword.trim();
+
+    if (!identity || !password) {
       setAuthMessage('Preencha login e senha.');
       return;
     }
@@ -3018,17 +3021,19 @@ export default function App() {
 
       if (authMode === 'register') {
         const registerRes = await api.post('/auth/register', {
-          nome: authLogin,
-          email: authLogin,
-          senha: authPassword
+          nome: identity,
+          login: identity,
+          email: identity.includes('@') ? identity : null,
+          senha: password
         });
 
         user = sanitizeDeepText(registerRes.data.usuario as User);
         setAuthMessage('Usuário criado com sucesso.');
       } else {
         const loginRes = await api.post('/auth/login', {
-          email: authLogin,
-          senha: authPassword
+          login: identity,
+          email: identity.includes('@') ? identity : null,
+          senha: password
         });
 
         user = sanitizeDeepText(loginRes.data.usuario as User);
@@ -3040,8 +3045,17 @@ export default function App() {
       setAuthPassword('');
       setActiveSection('library');
       await loadSongs('library', user);
-    } catch (error: any) {
-      setAuthMessage(repairTextEncoding(error?.response?.data?.error) || 'Falha ao autenticar usuário.');
+    } catch (error: unknown) {
+      const authError = error as { response?: { data?: { error?: unknown }; status?: number } };
+      const backendError = authError.response?.data?.error;
+      const backendMessage = repairTextEncoding(
+        typeof backendError === 'string' ? backendError : undefined
+      );
+      const status = authError.response?.status;
+      setAuthMessage(
+        backendMessage
+          || (status ? `Falha ao autenticar usuário (${status}).` : 'Falha ao falar com o serviço local.')
+      );
     }
   };
 

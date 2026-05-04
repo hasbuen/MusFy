@@ -3516,6 +3516,37 @@ function findUserByEmail(email) {
   );
 }
 
+function findUserByLoginOrEmail(loginOrEmail) {
+  const normalized = String(loginOrEmail || '').trim().toLowerCase();
+  if (!normalized) return null;
+
+  return db.users.find((user) => {
+    const login = String(user.login || '').trim().toLowerCase();
+    const email = String(user.email || '').trim().toLowerCase();
+    const nome = String(user.nome || '').trim().toLowerCase();
+    return login === normalized || email === normalized || nome === normalized;
+  }) || null;
+}
+
+function normalizeAuthIdentity(value) {
+  return String(value || '').trim();
+}
+
+function normalizeOptionalEmail(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized.includes('@') ? normalized : null;
+}
+
+function serializeAuthUser(user) {
+  return {
+    id: user.id,
+    nome: user.nome,
+    login: user.login || user.email || user.nome || null,
+    email: user.email || null,
+    criadoEm: user.criadoEm
+  };
+}
+
 function getScopedMusicLibrary(userId, section = 'library') {
   const normalizedLibrary = db.musicLibrary.map((music) => normalizeMusicRecord(music));
 
@@ -4192,29 +4223,46 @@ app.post('/usuarios', (req, res) => {
 
 app.post('/auth/register', (req, res) => {
   try {
-    const { nome, email, senha } = req.body;
+    const { nome, login, email, senha } = req.body;
+    const identity = normalizeAuthIdentity(login || email || nome);
+    const displayName = normalizeAuthIdentity(nome || login || email);
 
-    if (!nome || !String(nome).trim()) {
-      return res.status(400).json({ error: 'Nome é obrigatório' });
-    }
-
-    if (!email || !String(email).trim()) {
-      return res.status(400).json({ error: 'Email é obrigatório' });
+    if (!identity) {
+      return res.status(400).json({ error: 'Login e obrigatorio' });
     }
 
     if (!senha || String(senha).trim().length < 3) {
       return res.status(400).json({ error: 'Senha deve ter ao menos 3 caracteres' });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedLogin = identity.toLowerCase();
+    const normalizedEmail = normalizeOptionalEmail(email || login);
+    const existingUser = findUserByLoginOrEmail(normalizedLogin)
+      || (normalizedEmail ? findUserByEmail(normalizedEmail) : null);
 
-    if (findUserByEmail(normalizedEmail)) {
-      return res.status(409).json({ error: 'Já existe usuário com este email' });
+    if (existingUser) {
+      if (String(existingUser.senha || '').trim()) {
+        return res.status(409).json({ error: 'Ja existe usuario com este login' });
+      }
+
+      existingUser.nome = existingUser.nome || displayName || identity;
+      existingUser.login = existingUser.login || normalizedLogin;
+      existingUser.email = existingUser.email || normalizedEmail;
+      existingUser.senha = String(senha).trim();
+      saveDb();
+
+      addLog(`Usuario existente protegido por senha: ${existingUser.nome}`);
+
+      return res.json({
+        success: true,
+        usuario: serializeAuthUser(existingUser)
+      });
     }
 
     const user = {
       id: generateId(),
-      nome: String(nome).trim(),
+      nome: displayName || identity,
+      login: normalizedLogin,
       email: normalizedEmail,
       senha: String(senha).trim(),
       criadoEm: new Date().toISOString()
@@ -4223,48 +4271,39 @@ app.post('/auth/register', (req, res) => {
     db.users.unshift(user);
     saveDb();
 
-    addLog(`👤 Usuário registrado: ${user.nome}`);
+    addLog(`Usuario registrado: ${user.nome}`);
 
     res.status(201).json({
       success: true,
-      usuario: {
-        id: user.id,
-        nome: user.nome,
-        email: user.email,
-        criadoEm: user.criadoEm
-      }
+      usuario: serializeAuthUser(user)
     });
   } catch (err) {
-    addLog(`❌ Erro ao registrar usuário: ${err.message}`);
-    res.status(500).json({ error: 'Erro ao registrar usuário' });
+    addLog(`Erro ao registrar usuario: ${err.message}`);
+    res.status(500).json({ error: 'Erro ao registrar usuario' });
   }
 });
 
 app.post('/auth/login', (req, res) => {
   try {
-    const { email, senha } = req.body;
+    const { login, email, senha } = req.body;
+    const identity = normalizeAuthIdentity(login || email);
 
-    if (!email || !senha) {
-      return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+    if (!identity || !senha) {
+      return res.status(400).json({ error: 'Login e senha sao obrigatorios' });
     }
 
-    const user = findUserByEmail(email);
+    const user = findUserByLoginOrEmail(identity);
     if (!user || user.senha !== String(senha)) {
-      return res.status(401).json({ error: 'Credenciais inválidas' });
+      return res.status(401).json({ error: 'Login ou senha invalidos' });
     }
 
     res.json({
       success: true,
-      usuario: {
-        id: user.id,
-        nome: user.nome,
-        email: user.email,
-        criadoEm: user.criadoEm
-      }
+      usuario: serializeAuthUser(user)
     });
   } catch (err) {
-    addLog(`❌ Erro ao autenticar usuário: ${err.message}`);
-    res.status(500).json({ error: 'Erro ao autenticar usuário' });
+    addLog(`Erro ao autenticar usuario: ${err.message}`);
+    res.status(500).json({ error: 'Erro ao autenticar usuario' });
   }
 });
 

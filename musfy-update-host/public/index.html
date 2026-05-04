@@ -798,7 +798,7 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.22</strong>
+              <strong id="release-version">0.1.23</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
@@ -923,16 +923,16 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.22</h3>
+            <h3 id="release-name">MusFy 0.1.23</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
             </p>
             <ul id="release-notes-list">
-              <li>Corrige o atualizador para preservar contas, biblioteca, playlists e audios baixados.</li>
-              <li>Remove a limpeza automatica de AppData no instalador.</li>
-              <li>Protege ProgramData/AppData com backup e restauracao durante updates.</li>
-              <li>Adiciona testes automatizados contra regressao de perda de dados.</li>
+              <li>Corrige login e criacao de usuario depois da atualizacao.</li>
+              <li>Permite autenticar por login, email ou nome ja gravado.</li>
+              <li>Recupera usuarios antigos que existiam sem senha local.</li>
+              <li>Adiciona teste de smoke para impedir regressao no fluxo de autenticacao.</li>
             </ul>
           </article>
 
@@ -1022,18 +1022,18 @@
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.22",
-        name: "MusFy 0.1.22",
-        size: 166775194,
-        publishedAt: "2026-05-04T11:28:48.344Z",
+        version: "0.1.23",
+        name: "MusFy 0.1.23",
+        size: 166776265,
+        publishedAt: "2026-05-04T12:28:52.595Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Corrige o atualizador para preservar contas, biblioteca, playlists e audios baixados.",
-          "Remove a limpeza automatica de AppData no instalador.",
-          "Protege ProgramData/AppData com backup e restauracao durante updates.",
-          "Adiciona testes automatizados contra regressao de perda de dados."
+          "Corrige login e criacao de usuario depois da atualizacao.",
+          "Permite autenticar por login, email ou nome ja gravado.",
+          "Recupera usuarios antigos que existiam sem senha local.",
+          "Adiciona teste de smoke para impedir regressao no fluxo de autenticacao."
         ]
       };
 

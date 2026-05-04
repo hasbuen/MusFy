@@ -4,6 +4,8 @@
   "description": "Backend para o aplicativo MusFy com conversão de áudio MP3 para OPUS",
   "main": "server.js",
   "scripts": {
+    "test": "npm run test:auth",
+    "test:auth": "node tests/auth-smoke.cjs",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
