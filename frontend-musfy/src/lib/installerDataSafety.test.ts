@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = path.resolve(__dirname, '..', '..');
 const nsisScriptPath = path.join(repoRoot, 'build', 'nsis', 'service-installer.nsh');
 const electronBuilderConfigPath = path.join(repoRoot, 'electron-builder.json5');
+const prepareRuntimeScriptPath = path.join(repoRoot, 'build', 'windows', 'prepare-runtime.cjs');
+const serviceHostSourcePath = path.join(repoRoot, 'build', 'windows', 'MusFyServiceHost.cs');
 
 describe('installer data safety', () => {
   it('does not ask electron-builder to delete app data on uninstall', () => {
@@ -40,5 +42,23 @@ describe('installer data safety', () => {
 
     expect(uninstallMacro).toContain('${IfNot} ${isUpdated}');
     expect(uninstallMacro).toContain('dados do usuario preservados');
+  });
+
+  it('packages backend dependencies from a prepared runtime folder', () => {
+    const config = fs.readFileSync(electronBuilderConfigPath, 'utf-8');
+    const prepareRuntime = fs.readFileSync(prepareRuntimeScriptPath, 'utf-8');
+
+    expect(config).toContain('"from": "build/backend-musfy"');
+    expect(config).not.toContain('"from": "../backend-musfy"');
+    expect(prepareRuntime).toContain('copyBackendRuntime');
+    expect(prepareRuntime).toContain("path.join(backendBundleDir, 'dependencies')");
+    expect(prepareRuntime).toContain("path.join(bundledModulesDir, 'express')");
+  });
+
+  it('points the Windows service host to bundled backend dependencies', () => {
+    const serviceHost = fs.readFileSync(serviceHostSourcePath, 'utf-8');
+
+    expect(serviceHost).toContain('NODE_PATH');
+    expect(serviceHost).toContain('Path.Combine(resourcesDir, "backend-musfy", "dependencies")');
   });
 });

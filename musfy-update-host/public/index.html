@@ -798,7 +798,7 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.23</strong>
+              <strong id="release-version">0.1.24</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
@@ -923,16 +923,16 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.23</h3>
+            <h3 id="release-name">MusFy 0.1.24</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
             </p>
             <ul id="release-notes-list">
-              <li>Corrige login e criacao de usuario depois da atualizacao.</li>
-              <li>Permite autenticar por login, email ou nome ja gravado.</li>
-              <li>Recupera usuarios antigos que existiam sem senha local.</li>
-              <li>Adiciona teste de smoke para impedir regressao no fluxo de autenticacao.</li>
+              <li>Corrige a inicializacao do servico local apos a atualizacao.</li>
+              <li>Inclui as dependencias do backend no instalador Windows.</li>
+              <li>Mantem login por usuario, email ou nome ja gravado.</li>
+              <li>Adiciona teste contra regressao no empacotamento do backend.</li>
             </ul>
           </article>
 
@@ -1022,18 +1022,18 @@
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.23",
-        name: "MusFy 0.1.23",
-        size: 166776265,
-        publishedAt: "2026-05-04T12:28:52.595Z",
+        version: "0.1.24",
+        name: "MusFy 0.1.24",
+        size: 229106548,
+        publishedAt: "2026-05-04T12:43:46.759Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Corrige login e criacao de usuario depois da atualizacao.",
-          "Permite autenticar por login, email ou nome ja gravado.",
-          "Recupera usuarios antigos que existiam sem senha local.",
-          "Adiciona teste de smoke para impedir regressao no fluxo de autenticacao."
+          "Corrige a inicializacao do servico local apos a atualizacao.",
+          "Inclui as dependencias do backend no instalador Windows.",
+          "Mantem login por usuario, email ou nome ja gravado.",
+          "Adiciona teste contra regressao no empacotamento do backend."
         ]
       };
 

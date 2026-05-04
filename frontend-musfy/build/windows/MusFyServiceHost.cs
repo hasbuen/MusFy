@@ -70,6 +70,7 @@ namespace MusFy.ServiceHost
             startInfo.EnvironmentVariables["MUSFY_SERVICE_BOOT"] = "1";
             startInfo.EnvironmentVariables["MUSFY_SERVICE_MODE"] = "local-service";
             startInfo.EnvironmentVariables["MUSFY_FRONTEND_DIST"] = frontendDist;
+            startInfo.EnvironmentVariables["NODE_PATH"] = Path.Combine(resourcesDir, "backend-musfy", "dependencies");
 
             _backendProcess = new Process
             {

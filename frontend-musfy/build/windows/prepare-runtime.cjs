@@ -6,6 +6,7 @@ const frontendRoot = path.resolve(__dirname, '..', '..');
 const projectRoot = path.resolve(frontendRoot, '..');
 const backendRoot = path.join(projectRoot, 'backend-musfy');
 const windowsBuildDir = path.join(frontendRoot, 'build', 'windows');
+const backendBundleDir = path.join(frontendRoot, 'build', 'backend-musfy');
 
 const sourceNode = process.execPath;
 const runtimeDir = path.join(frontendRoot, 'build', 'runtime');
@@ -71,6 +72,65 @@ function buildWindowsServiceHost() {
 }
 
 buildWindowsServiceHost();
+
+function copyBackendRuntime() {
+  const includedRootEntries = new Set([
+    'server.js',
+    'runtime-services.js',
+    'package.json',
+    'bin'
+  ]);
+  const excludedNames = new Set([
+    '.cache',
+    '.bin',
+    'nodemon',
+    'data',
+    'downloads',
+    'uploads',
+    'opus_files',
+    'video_files',
+    'ffmpeg'
+  ]);
+
+  fs.rmSync(backendBundleDir, { recursive: true, force: true });
+  fs.cpSync(backendRoot, backendBundleDir, {
+    recursive: true,
+    force: true,
+    filter(source) {
+      const relative = path.relative(backendRoot, source);
+      if (!relative) return true;
+
+      const parts = relative.split(path.sep);
+      if (!includedRootEntries.has(parts[0])) return false;
+      if (parts.some((part) => excludedNames.has(part))) return false;
+
+      return true;
+    }
+  });
+
+  const sourceModulesDir = path.join(backendRoot, 'node_modules');
+  const bundledModulesDir = path.join(backendBundleDir, 'dependencies');
+  fs.cpSync(sourceModulesDir, bundledModulesDir, {
+    recursive: true,
+    force: true,
+    filter(source) {
+      const relative = path.relative(sourceModulesDir, source);
+      if (!relative) return true;
+
+      const parts = relative.split(path.sep);
+      return !parts.some((part) => excludedNames.has(part));
+    }
+  });
+
+  const expressDir = path.join(bundledModulesDir, 'express');
+  if (!fs.existsSync(expressDir)) {
+    throw new Error(`Backend runtime incompleto: express nao encontrado em ${expressDir}`);
+  }
+
+  console.log(`[prepare-runtime] Copied backend runtime -> ${backendBundleDir}`);
+}
+
+copyBackendRuntime();
 
 if (fs.existsSync(redisSourceDir)) {
   fs.mkdirSync(redisTargetDir, { recursive: true });

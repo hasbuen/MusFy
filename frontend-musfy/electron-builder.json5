@@ -44,27 +44,10 @@
       "to": "frontend-dist"
     },
     {
-      "from": "../backend-musfy",
+      "from": "build/backend-musfy",
       "to": "backend-musfy",
       "filter": [
-        "server.js",
-        "runtime-services.js",
-        "package.json",
-        "bin/**",
-        "node_modules/**",
-        "!node_modules/.cache/**",
-        "!node_modules/nodemon/**",
-        "!node_modules/.bin/**",
-        "!ffmpeg/**",
-        "!data/**",
-        "!downloads/**",
-        "!uploads/**",
-        "!opus_files/**",
-        "!video_files/**",
-        "!database.json",
-        "!downloader.py",
-        "!package-lock.json",
-        "!yarn.lock"
+        "**/*"
       ]
     }
   ],
