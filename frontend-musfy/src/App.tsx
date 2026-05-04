@@ -40,6 +40,15 @@ import {
 import api from './services/api';
 import brandMark from './assets/musfy-mark.svg';
 import type { DesktopOnboardingStep } from './components/DesktopOnboardingOverlay';
+import { createOfflineAudioStore, type LocalForageImportShape, type OfflineAudioStore } from './lib/offlineAudioStore';
+import { buildLocalVideoPlaybackUrl, resolveAudioPlaybackUrl } from './lib/playbackUrl';
+import {
+  filterVisibleRecentSearches,
+  getRecentSearchKey,
+  HIDDEN_YOUTUBE_SEARCHES_STORAGE_KEY,
+  hideRecentSearch,
+  parseHiddenRecentSearches
+} from './lib/youtubeRecentSearches';
 
 interface Song {
   id: string;
@@ -313,11 +322,9 @@ const AUTH_STORAGE_KEY = 'musfy-current-user';
 const DEVICE_ID_STORAGE_KEY = 'musfy-device-id';
 const DEVICE_NAME_STORAGE_KEY = 'musfy-device-name';
 const DESKTOP_ONBOARDING_STORAGE_KEY = 'musfy-desktop-onboarding-v1';
-
-type LocalForageModule = typeof import('localforage');
 let qrCodeModulePromise: Promise<typeof import('qrcode')> | null = null;
-let localForageModulePromise: Promise<LocalForageModule> | null = null;
-let offlineAudioStorePromise: Promise<ReturnType<LocalForageModule['createInstance']>> | null = null;
+let localForageModulePromise: Promise<LocalForageImportShape> | null = null;
+let offlineAudioStorePromise: Promise<OfflineAudioStore> | null = null;
 
 const DESKTOP_ONBOARDING_STEPS: DesktopOnboardingStep[] = [
   {
@@ -370,11 +377,8 @@ function loadLocalForageModule() {
 
 function getOfflineAudioStore() {
   if (!offlineAudioStorePromise) {
-    offlineAudioStorePromise = loadLocalForageModule().then((localforage) =>
-      localforage.createInstance({
-        name: 'musfy-offline',
-        storeName: 'audio_cache'
-      })
+    offlineAudioStorePromise = loadLocalForageModule().then((localforageModule) =>
+      createOfflineAudioStore(localforageModule)
     );
   }
 
@@ -646,9 +650,12 @@ export default function App() {
   const [youtubePreviewStream, setYoutubePreviewStream] = useState<YoutubePreviewStream | null>(null);
   const [youtubePreviewMessage, setYoutubePreviewMessage] = useState('');
   const [isYoutubePreviewLoading, setIsYoutubePreviewLoading] = useState(false);
-  const [youtubeSearchSource, setYoutubeSearchSource] = useState('');
+  const [youtubePreviewRequestVersion, setYoutubePreviewRequestVersion] = useState(0);
   const [youtubeSearchMessage, setYoutubeSearchMessage] = useState('');
   const [youtubeRecentSearches, setYoutubeRecentSearches] = useState<YoutubeRecentSearch[]>([]);
+  const [hiddenYoutubeRecentSearches, setHiddenYoutubeRecentSearches] = useState<string[]>(() => {
+    return parseHiddenRecentSearches(localStorage.getItem(HIDDEN_YOUTUBE_SEARCHES_STORAGE_KEY));
+  });
   const [isSearchingYoutube, setIsSearchingYoutube] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [youtubeArtist, setYoutubeArtist] = useState('');
@@ -728,6 +735,10 @@ export default function App() {
   );
   const [isDesktopOnboardingOpen, setIsDesktopOnboardingOpen] = useState(false);
   const [desktopOnboardingStepIndex, setDesktopOnboardingStepIndex] = useState(0);
+
+  const visibleYoutubeRecentSearches = useMemo(() => {
+    return filterVisibleRecentSearches(youtubeRecentSearches, hiddenYoutubeRecentSearches);
+  }, [hiddenYoutubeRecentSearches, youtubeRecentSearches]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -938,16 +949,27 @@ export default function App() {
 
   const getPlaybackUrl = async (song: Song, mode: PlaybackMode) => {
     if (mode === 'audio') {
-      const store = await getOfflineAudioStore();
-      const offline = await store.getItem<OfflineAudioRecord>(getOfflineAudioKey(song.id));
-      if (offline?.blob) {
-        releaseObjectUrl();
-        objectUrlRef.current = URL.createObjectURL(offline.blob);
-        return objectUrlRef.current;
+      const playbackUrl = await resolveAudioPlaybackUrl({
+        songId: song.id,
+        baseUrl: String(api.defaults.baseURL || ''),
+        getOfflineBlob: async () => {
+          const store = await getOfflineAudioStore();
+          const offline = await store.getItem<OfflineAudioRecord>(getOfflineAudioKey(song.id));
+          return offline?.blob || null;
+        },
+        createObjectUrl: (blob) => {
+          objectUrlRef.current = URL.createObjectURL(blob);
+          return objectUrlRef.current;
+        },
+        releaseObjectUrl,
+        onOfflineCacheError: (error) => {
+          console.warn('Cache offline indisponivel. Usando streaming local.', error);
+          offlineAudioStorePromise = null;
+        }
+      });
+      if (!playbackUrl.startsWith('blob:')) {
+        await ensurePlaybackEndpointAvailable(playbackUrl, 'Arquivo de audio indisponivel para esta faixa.');
       }
-
-      const playbackUrl = `${api.defaults.baseURL}/reproduzir-musica/${song.id}`;
-      await ensurePlaybackEndpointAvailable(playbackUrl, 'Arquivo de audio indisponivel para esta faixa.');
       return playbackUrl;
     }
 
@@ -955,7 +977,7 @@ export default function App() {
       throw new Error('Esta faixa nao possui video salvo');
     }
 
-    const playbackUrl = `${api.defaults.baseURL}/reproduzir-video/${song.id}`;
+    const playbackUrl = buildLocalVideoPlaybackUrl(String(api.defaults.baseURL || ''), song.id);
     await ensurePlaybackEndpointAvailable(playbackUrl, 'Video indisponivel para esta faixa.');
     return playbackUrl;
   };
@@ -1037,6 +1059,18 @@ export default function App() {
   const loadYoutubeRecentSearches = async () => {
     const res = await api.get('/youtube/history', { params: { limit: 8 } });
     setYoutubeRecentSearches(sanitizeDeepText(Array.isArray(res.data) ? (res.data as YoutubeRecentSearch[]) : []));
+  };
+
+  const hideYoutubeRecentSearch = (query: string) => {
+    const key = getRecentSearchKey(query);
+    if (!key) return;
+
+    setHiddenYoutubeRecentSearches((current) => {
+      const next = hideRecentSearch(current, key);
+      if (next === current) return current;
+      localStorage.setItem(HIDDEN_YOUTUBE_SEARCHES_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   };
 
   const sendDeviceState = async (
@@ -2434,11 +2468,9 @@ export default function App() {
       const playlistResults = Array.isArray(res.data?.playlists)
         ? (res.data.playlists as YoutubeSearchPlaylistResult[])
         : [];
-      const source = String(res.data?.source || '');
 
       setYoutubeSearchResults(results);
       setYoutubePlaylistSearchResults(playlistResults);
-      setYoutubeSearchSource(source);
       const resultChunks = [
         playlistResults.length > 0 ? `${playlistResults.length} playlists` : null,
         results.length > 0 ? `${results.length} faixas` : null
@@ -2446,7 +2478,7 @@ export default function App() {
 
       setYoutubeSearchMessage(
         resultChunks.length > 0
-          ? `${resultChunks.join(' • ')} encontrados${source ? ` • cache ${source}` : ''}`
+          ? `${resultChunks.join(' • ')} encontrados`
           : 'Nenhum resultado encontrado para esse termo.'
       );
       await loadYoutubeRecentSearches();
@@ -2512,6 +2544,7 @@ export default function App() {
       ...preview,
       videoId
     });
+    setYoutubePreviewRequestVersion((current) => current + 1);
   };
 
   const closeYoutubePreview = () => {
@@ -2519,6 +2552,13 @@ export default function App() {
     setYoutubePreviewStream(null);
     setYoutubePreviewMessage('');
     setIsYoutubePreviewLoading(false);
+  };
+
+  const retryYoutubePreview = () => {
+    if (!youtubePreview?.url) return;
+    setYoutubePreviewStream(null);
+    setYoutubePreviewMessage('');
+    setYoutubePreviewRequestVersion((current) => current + 1);
   };
 
   const closeYoutubeActionModal = () => {
@@ -2563,7 +2603,7 @@ export default function App() {
     return () => {
       canceled = true;
     };
-  }, [youtubePreview?.url]);
+  }, [youtubePreview?.url, youtubePreviewRequestVersion]);
 
   const selectYoutubeSearchResult = async (result: YoutubeSearchResult) => {
     const requestId = youtubeSelectionRequestIdRef.current + 1;
@@ -3810,34 +3850,78 @@ export default function App() {
                     {youtubeSearchMessage ? (
                       <p className="mt-3 text-sm text-cyan-50/80">
                         {youtubeSearchMessage}
-                        {youtubeSearchSource ? <span className="ml-2 text-cyan-200/60">[{youtubeSearchSource}]</span> : null}
                       </p>
                     ) : null}
 
-                    {youtubeRecentSearches.length > 0 ? (
+                    {visibleYoutubeRecentSearches.length > 0 ? (
                       <div className="mt-5">
                         <div className="mb-3 flex items-center justify-between">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-500">Buscas recentes</p>
-                          <p className="text-[11px] text-gray-500">SQLite local</p>
+                          <p className="text-[11px] text-gray-500">Remova o que não quiser ver</p>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          {youtubeRecentSearches.map((entry) => (
-                            <button
+                          {visibleYoutubeRecentSearches.map((entry) => (
+                            <span
                               key={`${entry.query}-${entry.lastSearchedAt}`}
-                              onClick={() => {
-                                setYoutubeSearchQuery(entry.query);
-                                void searchYoutubeInsideApp(entry.query);
-                              }}
-                              className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-gray-300 transition hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-white"
+                              className="group inline-flex max-w-full items-center overflow-hidden rounded-full border border-white/10 bg-white/[0.04] text-xs text-gray-300 transition hover:border-cyan-400/30 hover:bg-cyan-400/10 hover:text-white"
                             >
-                              {entry.query}
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setYoutubeSearchQuery(entry.query);
+                                  void searchYoutubeInsideApp(entry.query);
+                                }}
+                                className="min-w-0 truncate py-2 pl-3 pr-2"
+                                title={`Buscar ${entry.query}`}
+                              >
+                                {entry.query}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => hideYoutubeRecentSearch(entry.query)}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center border-l border-white/10 text-gray-500 transition hover:bg-white/10 hover:text-white"
+                                aria-label={`Remover ${entry.query} das buscas recentes`}
+                                title="Remover"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
                           ))}
                         </div>
                       </div>
                     ) : null}
 
-                    {youtubePlaylistSearchResults.length > 0 ? (
+                    {isSearchingYoutube ? (
+                      <div className="mt-6">
+                        <div className="mb-4 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="h-3 w-40 animate-pulse rounded-full bg-cyan-300/20" />
+                            <div className="mt-2 h-4 w-72 animate-pulse rounded-full bg-white/10" />
+                          </div>
+                          <div className="h-7 w-24 animate-pulse rounded-full bg-white/10" />
+                        </div>
+                        <div className="grid gap-4 xl:grid-cols-2">
+                          {Array.from({ length: 4 }).map((_, index) => (
+                            <div
+                              key={`youtube-search-skeleton-${index}`}
+                              className="overflow-hidden rounded-[26px] border border-cyan-400/10 bg-[#071116]"
+                            >
+                              <div className="aspect-video animate-pulse bg-[linear-gradient(110deg,rgba(255,255,255,0.04),rgba(34,211,238,0.12),rgba(255,255,255,0.04))] bg-[length:220%_100%]" />
+                              <div className="space-y-3 p-4">
+                                <div className="h-4 w-4/5 animate-pulse rounded-full bg-white/10" />
+                                <div className="h-3 w-2/3 animate-pulse rounded-full bg-white/5" />
+                                <div className="flex gap-2 pt-2">
+                                  <div className="h-9 w-28 animate-pulse rounded-full bg-white/10" />
+                                  <div className="h-9 w-20 animate-pulse rounded-full bg-cyan-300/10" />
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {!isSearchingYoutube && youtubePlaylistSearchResults.length > 0 ? (
                       <div className="mt-6">
                         <div className="mb-4 flex items-center justify-between gap-3">
                           <div>
@@ -3954,7 +4038,7 @@ export default function App() {
                       </div>
                     ) : null}
 
-                    {youtubeSearchResults.length > 0 ? (
+                    {!isSearchingYoutube && youtubeSearchResults.length > 0 ? (
                       <div className="mt-6">
                         <div className="mb-4 flex items-center justify-between gap-3">
                           <div>
@@ -4917,12 +5001,47 @@ export default function App() {
                   playsInline
                   poster={youtubePreview.videoId ? `https://img.youtube.com/vi/${youtubePreview.videoId}/hqdefault.jpg` : undefined}
                   className="h-full w-full bg-black object-contain"
-                  onError={() => setYoutubePreviewMessage('O stream temporário expirou ou foi bloqueado pelo YouTube. Tente abrir a prévia novamente.')}
+                  onError={() => {
+                    setYoutubePreviewStream(null);
+                    setYoutubePreviewMessage('O stream temporário expirou ou foi bloqueado pelo YouTube. Tente abrir a prévia novamente.');
+                  }}
                 />
+              ) : isYoutubePreviewLoading ? (
+                <div className="relative flex h-full flex-col overflow-hidden bg-[#05090b]">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(34,211,238,0.18),transparent_34%)]" />
+                  <div className="relative flex flex-1 items-center justify-center px-8">
+                    <div className="w-full max-w-3xl">
+                      <div className="aspect-video overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03] p-5 shadow-2xl">
+                        <div className="h-full w-full animate-pulse rounded-[18px] bg-[linear-gradient(110deg,rgba(255,255,255,0.05),rgba(34,211,238,0.16),rgba(255,255,255,0.05))] bg-[length:220%_100%]" />
+                      </div>
+                      <div className="mt-6 flex items-center justify-center gap-3 text-sm text-cyan-100">
+                        <LoaderCircle size={18} className="animate-spin" />
+                        <span>Preparando reprodução segura dentro do MusFy...</span>
+                      </div>
+                      <div className="mx-auto mt-4 h-2 max-w-md overflow-hidden rounded-full bg-white/10">
+                        <div className="h-full w-2/3 animate-pulse rounded-full bg-cyan-300/70" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center text-sm text-gray-400">
-                  {isYoutubePreviewLoading ? <LoaderCircle size={32} className="animate-spin text-cyan-300" /> : <Video size={34} className="text-gray-500" />}
-                  <p>{youtubePreviewMessage || 'Preparando reprodução direta pelo YouTube...'}</p>
+                  <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                    <Video size={34} className="text-gray-500" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-200">Não foi possível iniciar a prévia agora.</p>
+                    <p className="mt-2 max-w-lg text-gray-400">
+                      {youtubePreviewMessage || 'O YouTube pode ter bloqueado a URL temporária. Tente preparar a prévia novamente.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={retryYoutubePreview}
+                    className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-400/15"
+                  >
+                    Tentar novamente
+                  </button>
                 </div>
               )}
             </div>
@@ -5118,15 +5237,31 @@ export default function App() {
                       <span className="text-xs text-gray-500">{youtubeActionModal.analysis.playlist.entryCount} faixas</span>
                     </div>
                     <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
-                      {(youtubeActionModal.analysis.playlist.entries || []).map((entry, index) => (
-                        <div
-                          key={`${entry.url}-${index}`}
-                          className="flex items-center justify-between rounded-2xl border border-white/5 bg-black/20 px-3 py-2 text-sm"
-                        >
-                          <span className="truncate text-gray-200">{entry.title}</span>
-                          <span className="ml-3 text-xs text-gray-500">#{index + 1}</span>
+                      {youtubeActionModal.analysis.playlist.entries.length > 0 ? (
+                        youtubeActionModal.analysis.playlist.entries.map((entry, index) => (
+                          <div
+                            key={`${entry.url}-${index}`}
+                            className="flex items-center justify-between rounded-2xl border border-white/5 bg-black/20 px-3 py-2 text-sm"
+                          >
+                            <span className="truncate text-gray-200">{entry.title}</span>
+                            <span className="ml-3 text-xs text-gray-500">#{index + 1}</span>
+                          </div>
+                        ))
+                      ) : isInspectingYoutube ? (
+                        Array.from({ length: 4 }).map((_, index) => (
+                          <div
+                            key={`playlist-preview-skeleton-${index}`}
+                            className="flex items-center justify-between rounded-2xl border border-white/5 bg-black/20 px-3 py-3"
+                          >
+                            <div className="h-3 w-4/5 animate-pulse rounded-full bg-white/10" />
+                            <div className="ml-3 h-3 w-8 animate-pulse rounded-full bg-white/5" />
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-white/5 bg-black/20 px-3 py-4 text-sm leading-5 text-gray-400">
+                          O MusFy ainda está buscando as faixas desta playlist. Você já pode escolher uma ação ou tentar abrir a playlist novamente em instantes.
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
                 ) : null}

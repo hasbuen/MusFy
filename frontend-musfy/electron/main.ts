@@ -1187,9 +1187,8 @@ function createMainWindow() {
     markMainWindowSurfaceDirty();
   });
 
-  mainWindow.on('minimize', (event: Electron.Event) => {
+  mainWindow.on('minimize', () => {
     if (!isQuitting) {
-      event.preventDefault();
       hideToTray();
     }
   });
