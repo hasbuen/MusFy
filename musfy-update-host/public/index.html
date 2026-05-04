@@ -798,7 +798,7 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.21</strong>
+              <strong id="release-version">0.1.22</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
@@ -923,16 +923,16 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.21</h3>
+            <h3 id="release-name">MusFy 0.1.22</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
             </p>
             <ul id="release-notes-list">
-              <li>Corrige a reproducao da biblioteca quando o cache offline nao inicializa no Electron.</li>
-              <li>Mantem o streaming local funcionando mesmo se a consulta offline falhar.</li>
-              <li>Adiciona skeletons e retry para previas do YouTube bloqueadas ou ainda carregando.</li>
-              <li>Permite remover individualmente buscas recentes para reduzir poluicao visual.</li>
+              <li>Corrige o atualizador para preservar contas, biblioteca, playlists e audios baixados.</li>
+              <li>Remove a limpeza automatica de AppData no instalador.</li>
+              <li>Protege ProgramData/AppData com backup e restauracao durante updates.</li>
+              <li>Adiciona testes automatizados contra regressao de perda de dados.</li>
             </ul>
           </article>
 
@@ -1022,18 +1022,18 @@
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.21",
-        name: "MusFy 0.1.21",
-        size: 166839978,
-        publishedAt: "2026-05-04T11:13:51.214Z",
+        version: "0.1.22",
+        name: "MusFy 0.1.22",
+        size: 166775194,
+        publishedAt: "2026-05-04T11:28:48.344Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Corrige a reproducao da biblioteca quando o cache offline nao inicializa no Electron.",
-          "Mantem o streaming local funcionando mesmo se a consulta offline falhar.",
-          "Adiciona skeletons e retry para previas do YouTube bloqueadas ou ainda carregando.",
-          "Permite remover individualmente buscas recentes para reduzir poluicao visual."
+          "Corrige o atualizador para preservar contas, biblioteca, playlists e audios baixados.",
+          "Remove a limpeza automatica de AppData no instalador.",
+          "Protege ProgramData/AppData com backup e restauracao durante updates.",
+          "Adiciona testes automatizados contra regressao de perda de dados."
         ]
       };
 

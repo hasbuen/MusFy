@@ -14,7 +14,7 @@
 !macroend
 
 !macro RemoveMusFyFiles
-  DetailPrint "Removendo dados locais do MusFy..."
+  DetailPrint "Removendo atalhos e registros do MusFy..."
 
   SetShellVarContext current
   Delete "$DESKTOP\MusFy.lnk"
@@ -30,18 +30,36 @@
   Delete "$SMPROGRAMS\MusFy\Desinstalar MusFy.lnk"
   RMDir /r "$SMPROGRAMS\MusFy"
 
-  RMDir /r "$APPDATA\MusFy"
-  RMDir /r "$APPDATA\frontend-musfy"
-  RMDir /r "$APPDATA\Electron\musfy"
-  RMDir /r "$LOCALAPPDATA\MusFy"
-  RMDir /r "$LOCALAPPDATA\Programs\MusFy"
-  RMDir /r "$LOCALAPPDATA\frontend-musfy-updater"
-  RMDir /r "$APPDATA\MusFy"
-
   DeleteRegKey HKCU "Software\MusFy"
   DeleteRegKey HKLM "Software\MusFy"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\MusFy"
   DeleteRegKey HKLM "Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\MusFy"
+!macroend
+
+!macro BackupMusFyUserDataForUpdate
+  ${If} ${isUpdated}
+    DetailPrint "Protegendo biblioteca e contas antes da atualizacao..."
+    RMDir /r "$PLUGINSDIR\musfy-user-data-backup"
+    CreateDirectory "$PLUGINSDIR\musfy-user-data-backup"
+    nsExec::ExecToLog 'cmd.exe /C if exist "%ProgramData%\MusFy" robocopy "%ProgramData%\MusFy" "$PLUGINSDIR\musfy-user-data-backup\ProgramData" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS'
+    Pop $0
+    nsExec::ExecToLog 'cmd.exe /C if exist "%APPDATA%\MusFy" robocopy "%APPDATA%\MusFy" "$PLUGINSDIR\musfy-user-data-backup\AppDataRoaming" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS'
+    Pop $0
+    nsExec::ExecToLog 'cmd.exe /C if exist "%LOCALAPPDATA%\MusFy" robocopy "%LOCALAPPDATA%\MusFy" "$PLUGINSDIR\musfy-user-data-backup\AppDataLocal" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS'
+    Pop $0
+  ${EndIf}
+!macroend
+
+!macro RestoreMusFyUserDataForUpdate
+  ${If} ${isUpdated}
+    DetailPrint "Restaurando biblioteca e contas preservadas..."
+    nsExec::ExecToLog 'cmd.exe /C if exist "$PLUGINSDIR\musfy-user-data-backup\ProgramData" robocopy "$PLUGINSDIR\musfy-user-data-backup\ProgramData" "%ProgramData%\MusFy" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS'
+    Pop $0
+    nsExec::ExecToLog 'cmd.exe /C if exist "$PLUGINSDIR\musfy-user-data-backup\AppDataRoaming" robocopy "$PLUGINSDIR\musfy-user-data-backup\AppDataRoaming" "%APPDATA%\MusFy" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS'
+    Pop $0
+    nsExec::ExecToLog 'cmd.exe /C if exist "$PLUGINSDIR\musfy-user-data-backup\AppDataLocal" robocopy "$PLUGINSDIR\musfy-user-data-backup\AppDataLocal" "%LOCALAPPDATA%\MusFy" /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS'
+    Pop $0
+  ${EndIf}
 !macroend
 
 !macro StopMusFyService
@@ -88,6 +106,7 @@
 !macroend
 
 !macro customInit
+  !insertmacro BackupMusFyUserDataForUpdate
   !insertmacro KillMusFyProcesses
   !insertmacro StopMusFyService
 !macroend
@@ -95,6 +114,7 @@
 !macro customInstall
   !insertmacro KillMusFyProcesses
   !insertmacro DeleteMusFyService
+  !insertmacro RestoreMusFyUserDataForUpdate
   !insertmacro CreateMusFyService
 !macroend
 
@@ -102,5 +122,9 @@
   !insertmacro KillMusFyProcesses
   !insertmacro StopMusFyService
   !insertmacro DeleteMusFyService
-  !insertmacro RemoveMusFyFiles
+  ${IfNot} ${isUpdated}
+    !insertmacro RemoveMusFyFiles
+  ${Else}
+    DetailPrint "Atualizacao detectada: dados do usuario preservados."
+  ${EndIf}
 !macroend

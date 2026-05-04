@@ -1,7 +1,7 @@
 {
   "name": "frontend-musfy",
   "private": true,
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "MusFy desktop player with library sync, mini player, tray mode, video playback, and GitHub-powered updates",
   "author": "MusFy",
   "repository": {
@@ -15,7 +15,7 @@
     "release:github": "node scripts/publish-github-release.cjs",
     "release:github:build-only": "node scripts/publish-github-release.cjs --build-only",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "test": "vitest run",
+    "test": "vitest run --config vitest.config.ts",
     "verify": "npm run lint && npm run test && tsc && vite build",
     "preview": "vite preview"
   },

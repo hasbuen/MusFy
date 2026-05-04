@@ -4,13 +4,16 @@ import type { Rectangle } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { shell } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import type { autoUpdater as AutoUpdaterType } from 'electron-updater';
 import type { UpdateInfo } from 'builder-util-runtime';
 import { MusfyServiceController, getLocalNetworkAddresses } from './service-controller';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const { autoUpdater } = require('electron-updater') as { autoUpdater: typeof AutoUpdaterType };
 
 let mainWindow: BrowserWindow | null = null;
 let miniPlayerWindow: BrowserWindow | null = null;
