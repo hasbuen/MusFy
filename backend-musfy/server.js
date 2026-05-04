@@ -3138,10 +3138,10 @@ async function downloadSingleYoutubeTrack({
       onProgress({
         stage: 'convert',
         progress: shouldKeepVideo ? 74 : 100,
-        message: 'Convertendo audio para OPUS 16k'
+        message: 'Convertendo audio para OPUS em alta qualidade'
       });
     }
-    addLog(`[convert] Iniciando conversao para OPUS 16k | origem=${path.basename(sourceFile)}`);
+    addLog(`[convert] Iniciando conversao para OPUS HQ | origem=${path.basename(sourceFile)}`);
     await convertToOpus(sourceFile, finalFile, jobId);
     cleanupFileIfExists(sourceFile);
 
@@ -3820,23 +3820,23 @@ async function convertToOpus(inputPath, outputPath, jobId = null) {
       '-map_metadata',
       '-1',
       '-ac',
-      '1',
+      '2',
       '-ar',
-      '16000',
+      '48000',
       '-c:a',
       'libopus',
       '-b:a',
-      '16k',
+      '320k',
       '-application',
       'audio',
       '-vbr',
-      'off',
+      'on',
       '-compression_level',
       '10',
       outputPath
     ];
 
-    addLog('[convert] Convertendo para OPUS 16k mono...');
+    addLog('[convert] Convertendo para OPUS HQ 48kHz stereo 320k...');
     const ffmpeg = spawnManagedProcess(jobId, getFfmpegPath(), args, { windowsHide: true });
 
     ffmpeg.stdout.on('data', (data) => {
@@ -3935,7 +3935,9 @@ function getFfmpegBackupArgs({ sourcePath, outputPath, format, hasVideo }) {
       '-c:a',
       'libmp3lame',
       '-b:a',
-      '192k',
+      '320k',
+      '-q:a',
+      '0',
       outputPath
     ];
   }
@@ -3953,13 +3955,13 @@ function getFfmpegBackupArgs({ sourcePath, outputPath, format, hasVideo }) {
         '-c:v',
         'libx264',
         '-preset',
-        'veryfast',
+        'slow',
         '-pix_fmt',
         'yuv420p',
         '-c:a',
         'aac',
         '-b:a',
-        '160k',
+        '320k',
         '-movflags',
         '+faststart',
         outputPath
@@ -3977,19 +3979,21 @@ function getFfmpegBackupArgs({ sourcePath, outputPath, format, hasVideo }) {
       '-c:v',
       'mpeg4',
       '-q:v',
-      '5',
+      '2',
       '-c:a',
       'libmp3lame',
       '-b:a',
-      '192k',
+      '320k',
+      '-q:a',
+      '0',
       outputPath
     ];
   }
 
   const videoCodecArgs =
     format === 'mp4'
-      ? ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart']
-      : ['-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'libmp3lame', '-b:a', '192k'];
+      ? ['-c:v', 'libx264', '-preset', 'slow', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '320k', '-movflags', '+faststart']
+      : ['-c:v', 'mpeg4', '-q:v', '2', '-c:a', 'libmp3lame', '-b:a', '320k', '-q:a', '0'];
 
   return [
     '-y',

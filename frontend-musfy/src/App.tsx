@@ -2566,6 +2566,39 @@ export default function App() {
     setYoutubeActionModal(null);
   };
 
+  const buildYoutubeAnalysisForPlaylistEntry = (
+    analysis: YoutubeAnalysis,
+    entry: NonNullable<YoutubeAnalysis['playlist']>['entries'][number]
+  ): YoutubeAnalysis => ({
+    ...analysis,
+    url: entry.url,
+    videoId: entry.id || getYoutubeVideoIdFromUrl(entry.url),
+    selectedEntry: {
+      id: entry.id || getYoutubeVideoIdFromUrl(entry.url),
+      url: entry.url,
+      title: entry.title
+    }
+  });
+
+  const previewYoutubePlaylistEntry = (
+    analysis: YoutubeAnalysis,
+    entry: NonNullable<YoutubeAnalysis['playlist']>['entries'][number],
+    index: number
+  ) => {
+    const videoId = entry.id || getYoutubeVideoIdFromUrl(entry.url);
+    if (!videoId) {
+      setDownloadMessage('Não foi possível abrir esta faixa da playlist.');
+      return;
+    }
+
+    openYoutubePreview({
+      title: entry.title,
+      subtitle: `${analysis.playlist?.title || 'Playlist'} • faixa ${index + 1}`,
+      url: entry.url,
+      videoId
+    });
+  };
+
   useEffect(() => {
     if (!youtubePreview?.url) return;
 
@@ -3412,11 +3445,11 @@ export default function App() {
   }
 
   const sidebarItems = [
-    { id: 'home' as Section, label: 'Início', icon: Home },
-    { id: 'explore' as Section, label: 'Explorar', icon: Compass },
-    { id: 'library' as Section, label: 'Sua Biblioteca', icon: Library },
-    { id: 'favorites' as Section, label: 'Favoritas', icon: Heart },
-    { id: 'download' as Section, label: 'Baixar do YouTube', icon: Download }
+    { id: 'home' as Section, label: 'Início', description: 'Playlists e atalhos', icon: Home, count: homePlaylists.length },
+    { id: 'explore' as Section, label: 'Explorar', description: 'Descobertas da rede', icon: Compass, count: explorePlaylists.length },
+    { id: 'library' as Section, label: 'Sua Biblioteca', description: 'Faixas salvas', icon: Library, count: songs.length },
+    { id: 'favorites' as Section, label: 'Favoritas', description: 'Curtidas', icon: Heart, count: songs.filter((song) => song.favorite).length },
+    { id: 'download' as Section, label: 'YouTube Studio', description: 'Buscar e importar', icon: Download, count: downloadJobs.length }
   ];
 
   const handleMediaTimeUpdate = (element: HTMLMediaElement | null) => {
@@ -3482,7 +3515,7 @@ export default function App() {
           </div>
 
           <div className="px-4">
-            <div className="rounded-[28px] border border-white/10 bg-white/[0.03] p-3">
+            <div className="rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.025))] p-2 shadow-[0_24px_70px_rgba(0,0,0,0.22)]">
               {sidebarItems.map((item) => {
                 const active = activeSection === item.id;
 
@@ -3494,18 +3527,36 @@ export default function App() {
                       setActiveDiscoverPlaylistId(null);
                       setActiveSection(item.id);
                     }}
-                    className={`mb-1 flex w-full items-center gap-4 rounded-2xl px-4 py-3 text-left transition ${
+                    className={`group relative mb-1 flex w-full items-center gap-3 overflow-hidden rounded-[22px] px-3 py-3 text-left transition ${
                       active
-                        ? 'bg-white text-black shadow-[0_10px_30px_rgba(255,255,255,0.12)]'
-                        : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                        ? 'bg-white text-black shadow-[0_14px_36px_rgba(255,255,255,0.12)]'
+                        : 'text-gray-300 hover:bg-white/[0.06] hover:text-white'
                     } ${
                       activeDesktopOnboardingStepId === 'nav-download' && item.id === 'download'
                         ? desktopTourFocusClass
                         : ''
                     }`}
                   >
-                    <item.icon size={19} />
-                    <span className="font-medium">{item.label}</span>
+                    <span
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition ${
+                        active ? 'bg-black text-white' : 'bg-white/[0.05] text-gray-300 group-hover:bg-white/[0.09]'
+                      }`}
+                    >
+                      <item.icon size={18} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{item.label}</span>
+                      <span className={`mt-0.5 block truncate text-xs ${active ? 'text-black/60' : 'text-gray-500'}`}>
+                        {item.description}
+                      </span>
+                    </span>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${
+                        active ? 'bg-black/10 text-black/70' : 'bg-white/[0.06] text-gray-500'
+                      }`}
+                    >
+                      {item.count}
+                    </span>
                   </button>
                 );
               })}
@@ -3513,7 +3564,7 @@ export default function App() {
           </div>
 
           <div className="px-4 pt-4">
-            <div className="rounded-[28px] border border-white/10 bg-[#0f0f0f] p-4">
+            <div className="rounded-[28px] border border-green-400/10 bg-[radial-gradient(circle_at_top_left,rgba(34,197,94,0.16),transparent_42%),#0f0f0f] p-4">
               <div className="mb-3 flex items-center gap-3">
                 <Sparkles size={18} className="text-green-400" />
                 <span className="font-semibold">Usuário ativo</span>
@@ -3536,9 +3587,14 @@ export default function App() {
 
           <div className="px-4 pt-4">
             <div className="rounded-[28px] border border-white/10 bg-[#0f0f0f] p-4">
-              <div className="mb-3 flex items-center gap-3">
-                <Library size={18} className="text-green-400" />
-                <span className="font-semibold">Playlists</span>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <Library size={18} className="text-green-400" />
+                  <span className="font-semibold">Playlists</span>
+                </div>
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] text-gray-400">
+                  {playlists.length}
+                </span>
               </div>
 
                   <div className="mb-3 flex gap-2">
@@ -3559,15 +3615,15 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="space-y-2">
+              <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
                 {playlists.map((playlist) => {
                   const active = activePlaylistId === playlist.id;
 
                   return (
                     <div
                       key={playlist.id}
-                      className={`rounded-2xl border px-3 py-2 ${
-                        active ? 'border-white/20 bg-white text-black' : 'border-white/5 bg-white/[0.04] text-gray-200'
+                      className={`rounded-2xl border px-3 py-2 transition ${
+                        active ? 'border-green-300/30 bg-green-300/12 text-green-50' : 'border-white/5 bg-white/[0.04] text-gray-200 hover:bg-white/[0.07]'
                       }`}
                     >
                       <div className="flex items-center gap-2">
@@ -3597,7 +3653,7 @@ export default function App() {
                           ) : (
                             <div className="flex items-center justify-between gap-3">
                               <span className="truncate">{playlist.name}</span>
-                              <span className={`text-xs ${active ? 'text-black/70' : 'text-gray-500'}`}>
+                              <span className={`text-xs ${active ? 'text-green-100/70' : 'text-gray-500'}`}>
                                 {(playlist.songs || []).length}
                               </span>
                             </div>
@@ -3609,7 +3665,7 @@ export default function App() {
                             <>
                               <button
                                 onClick={() => void submitPlaylistRename(playlist.id)}
-                                className={`rounded-xl p-2 ${active ? 'hover:bg-black/10' : 'hover:bg-white/10'}`}
+                                className={`rounded-xl p-2 ${active ? 'hover:bg-white/10' : 'hover:bg-white/10'}`}
                                 title="Salvar nome"
                               >
                                 <Check size={14} />
@@ -3619,7 +3675,7 @@ export default function App() {
                                   setPlaylistEditingId(null);
                                   setPlaylistEditingName('');
                                 }}
-                                className={`rounded-xl p-2 ${active ? 'hover:bg-black/10' : 'hover:bg-white/10'}`}
+                                className={`rounded-xl p-2 ${active ? 'hover:bg-white/10' : 'hover:bg-white/10'}`}
                                 title="Cancelar edicao"
                               >
                                 <X size={14} />
@@ -3629,14 +3685,14 @@ export default function App() {
                             <>
                               <button
                                 onClick={() => startPlaylistRename(playlist)}
-                                className={`rounded-xl p-2 ${active ? 'hover:bg-black/10' : 'hover:bg-white/10'}`}
+                                className={`rounded-xl p-2 ${active ? 'hover:bg-white/10' : 'hover:bg-white/10'}`}
                                 title="Renomear playlist"
                               >
                                 <Pencil size={14} />
                               </button>
                               <button
                                 onClick={() => void deletePlaylist(playlist)}
-                                className={`rounded-xl p-2 ${active ? 'hover:bg-black/10' : 'hover:bg-white/10'}`}
+                                className={`rounded-xl p-2 ${active ? 'hover:bg-white/10' : 'hover:bg-white/10'}`}
                                 title="Excluir playlist"
                               >
                                 <Trash2 size={14} />
@@ -3950,9 +4006,6 @@ export default function App() {
                         <div className="pr-2">
                           <div className="grid gap-4 xl:grid-cols-2">
                           {youtubePlaylistSearchResults.map((result) => {
-                            const previewEntry = result.previewEntries?.[0] || null;
-                            const previewVideoId = previewEntry?.id || getYoutubeVideoIdFromUrl(previewEntry?.url || result.url);
-
                             return (
                             <div
                               key={`${result.id}-${result.url}`}
@@ -4016,21 +4069,11 @@ export default function App() {
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      if (!previewEntry || !previewVideoId) {
-                                        setDownloadMessage('Esta playlist não trouxe uma faixa de prévia para assistir agora.');
-                                        return;
-                                      }
-                                      openYoutubePreview({
-                                        title: previewEntry.title || result.title,
-                                        subtitle: getYoutubePlaylistSubtitle(result) || 'Prévia da playlist',
-                                        url: previewEntry.url,
-                                        videoId: previewVideoId
-                                      });
+                                      void selectYoutubePlaylistSearchResult(result);
                                     }}
-                                    disabled={!previewEntry || !previewVideoId}
-                                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-cyan-100 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-cyan-100 transition hover:bg-white/[0.08]"
                                   >
-                                    Assistir agora
+                                    Abrir playlist
                                   </button>
                                   <button
                                     type="button"
@@ -5107,6 +5150,108 @@ export default function App() {
               </button>
             </div>
 
+            {youtubeActionModal.analysis.kind === 'playlist' && youtubeActionModal.analysis.playlist ? (
+              <div className="mt-6 overflow-hidden rounded-[28px] border border-cyan-400/15 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_34%),rgba(255,255,255,0.03)]">
+                <div className="grid gap-0 lg:grid-cols-[280px_minmax(0,1fr)]">
+                  <div className="relative min-h-64 overflow-hidden bg-black">
+                    <img
+                      src={
+                        youtubeActionModal.analysis.videoId
+                          ? `https://img.youtube.com/vi/${youtubeActionModal.analysis.videoId}/hqdefault.jpg`
+                          : youtubeActionModal.analysis.selectedEntry?.id
+                            ? `https://img.youtube.com/vi/${youtubeActionModal.analysis.selectedEntry.id}/hqdefault.jpg`
+                            : brandMark
+                      }
+                      alt={youtubeActionModal.analysis.playlist.title}
+                      className="h-full min-h-64 w-full object-cover opacity-80"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent" />
+                    <div className="absolute bottom-4 left-4 right-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-200">Modo playlist</p>
+                      <p className="mt-2 text-2xl font-black text-white">{youtubeActionModal.analysis.playlist.entryCount} faixas</p>
+                      <p className="mt-1 text-xs text-gray-300">Assista faixa por faixa antes de baixar.</p>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300">Dentro da playlist</p>
+                        <p className="mt-1 truncate text-sm text-gray-400">Escolha uma faixa para assistir/ouvir direto do YouTube.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const entry = youtubeActionModal.analysis.playlist?.entries[0];
+                          if (!entry) return;
+                          previewYoutubePlaylistEntry(youtubeActionModal.analysis, entry, 0);
+                        }}
+                        disabled={!youtubeActionModal.analysis.playlist.entries.length}
+                        className="shrink-0 rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-400/15 disabled:opacity-40"
+                      >
+                        Reproduzir primeira
+                      </button>
+                    </div>
+
+                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {youtubeActionModal.analysis.playlist.entries.length > 0 ? (
+                        youtubeActionModal.analysis.playlist.entries.map((entry, index) => (
+                          <div
+                            key={`${entry.url}-${index}`}
+                            className="group flex min-w-0 items-center gap-3 rounded-2xl border border-white/10 bg-black/25 px-3 py-3 transition hover:border-cyan-300/20 hover:bg-cyan-300/10"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => previewYoutubePlaylistEntry(youtubeActionModal.analysis, entry, index)}
+                              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black transition group-hover:bg-cyan-300"
+                              title="Assistir ou ouvir agora"
+                            >
+                              <Play size={16} />
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-white" title={entry.title}>
+                                {entry.title}
+                              </p>
+                              <p className="mt-0.5 text-xs text-gray-500">Faixa #{index + 1}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const analysis = buildYoutubeAnalysisForPlaylistEntry(youtubeActionModal.analysis, entry);
+                                closeYoutubeActionModal();
+                                void startYoutubeDownload('single', analysis);
+                              }}
+                              disabled={isDownloading}
+                              className="shrink-0 rounded-full border border-white/10 px-3 py-2 text-xs text-gray-200 transition hover:bg-white/10 disabled:opacity-40"
+                            >
+                              Baixar
+                            </button>
+                          </div>
+                        ))
+                      ) : isInspectingYoutube ? (
+                        Array.from({ length: 5 }).map((_, index) => (
+                          <div
+                            key={`playlist-browser-skeleton-${index}`}
+                            className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/25 px-3 py-3"
+                          >
+                            <div className="h-10 w-10 animate-pulse rounded-full bg-white/10" />
+                            <div className="min-w-0 flex-1">
+                              <div className="h-3 w-4/5 animate-pulse rounded-full bg-white/10" />
+                              <div className="mt-2 h-2 w-20 animate-pulse rounded-full bg-white/5" />
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-white/10 bg-black/25 px-4 py-5 text-sm leading-6 text-gray-400">
+                          Ainda não veio uma lista reproduzível desta playlist. Tente abrir novamente ou use as ações de importação completa.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
               <div className="grid gap-3 md:grid-cols-2">
                 <button
@@ -5787,3 +5932,4 @@ export default function App() {
     </div>
   );
 }
+

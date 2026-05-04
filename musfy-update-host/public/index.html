@@ -798,7 +798,7 @@
           <div class="release-strip">
             <div class="release-card">
               <label>Versao atual</label>
-              <strong id="release-version">0.1.25</strong>
+              <strong id="release-version">0.1.26</strong>
             </div>
             <div class="release-card">
               <label>Tamanho do download</label>
@@ -923,16 +923,17 @@
 
         <div class="notes-grid">
           <article class="notes-panel">
-            <h3 id="release-name">MusFy 0.1.25</h3>
+            <h3 id="release-name">MusFy 0.1.26</h3>
             <p>
               Esta secao e atualizada a partir do ultimo release quando o repositorio estiver acessivel publicamente. Se
               a API nao responder, a pagina continua com o ultimo resumo conhecido.
             </p>
             <ul id="release-notes-list">
-              <li>Corrige a conversao por ffmpeg no backend local.</li>
-              <li>Mantem o pacote @ffmpeg-installer/ffmpeg no instalador Windows.</li>
-              <li>Evita scroll horizontal em nomes extensos na fila.</li>
-              <li>Melhora a leitura de mensagens longas no painel de atividade.</li>
+              <li>Converte downloads para OPUS 48 kHz stereo em 320k.</li>
+              <li>Remove a conversao antiga de 16 kHz mono.</li>
+              <li>Exporta backups MP3 em 320k com LAME no maximo.</li>
+              <li>Melhora audio de backups MP4/AAC e AVI/MP3 para 320k.</li>
+              <li>Adiciona navegador de playlist para assistir/ouvir faixas antes de baixar.</li>
             </ul>
           </article>
 
@@ -1022,18 +1023,19 @@
       const localInstallerUrl = new URL("./windows/MusFy-Setup.exe", window.location.href).toString();
 
       const fallbackRelease = {
-        version: "0.1.25",
-        name: "MusFy 0.1.25",
-        size: 229115581,
-        publishedAt: "2026-05-04T16:03:49.486Z",
+        version: "0.1.26",
+        name: "MusFy 0.1.26",
+        size: 229117852,
+        publishedAt: "2026-05-04T16:26:32.825Z",
         assetName: "MusFy-Setup.exe",
         downloadUrl: latestDownloadUrl,
         releaseUrl: latestReleaseUrl,
         notes: [
-          "Corrige a conversao por ffmpeg no backend local.",
-          "Mantem o pacote @ffmpeg-installer/ffmpeg no instalador Windows.",
-          "Evita scroll horizontal em nomes extensos na fila.",
-          "Melhora a leitura de mensagens longas no painel de atividade."
+          "Converte downloads para OPUS 48 kHz stereo em 320k.",
+          "Remove a conversao antiga de 16 kHz mono.",
+          "Exporta backups MP3 em 320k com LAME no maximo.",
+          "Melhora audio de backups MP4/AAC e AVI/MP3 para 320k.",
+          "Adiciona navegador de playlist para assistir/ouvir faixas antes de baixar."
         ]
       };
 
