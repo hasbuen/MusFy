@@ -88,9 +88,9 @@ function copyBackendRuntime() {
     'downloads',
     'uploads',
     'opus_files',
-    'video_files',
-    'ffmpeg'
+    'video_files'
   ]);
+  const excludedRootEntries = new Set(['ffmpeg']);
 
   fs.rmSync(backendBundleDir, { recursive: true, force: true });
   fs.cpSync(backendRoot, backendBundleDir, {
@@ -102,6 +102,7 @@ function copyBackendRuntime() {
 
       const parts = relative.split(path.sep);
       if (!includedRootEntries.has(parts[0])) return false;
+      if (excludedRootEntries.has(parts[0])) return false;
       if (parts.some((part) => excludedNames.has(part))) return false;
 
       return true;

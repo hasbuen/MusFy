@@ -4168,7 +4168,7 @@ export default function App() {
                   <div className="rounded-[32px] border border-white/10 bg-[#0d0d0d] p-6">
                     <p className="text-xs uppercase tracking-[0.24em] text-gray-500">Destino</p>
 
-                    <div className="mt-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+                    <div className="mt-4 overflow-hidden rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Fila de downloads</p>
@@ -4182,14 +4182,14 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="mt-4 max-h-[44vh] space-y-3 overflow-y-auto pr-1">
+                    <div className="mt-4 max-h-[44vh] space-y-3 overflow-x-hidden overflow-y-auto pr-1">
                       {downloadJobs.length === 0 ? (
                         <p className="text-sm text-gray-500">Nenhum download recente.</p>
                       ) : (
                         downloadJobs.slice(0, 6).map((job) => (
-                          <div key={job.id} className="rounded-[20px] border border-white/10 bg-black/20 p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
+                          <div key={job.id} className="min-w-0 overflow-hidden rounded-[20px] border border-white/10 bg-black/20 p-4">
+                            <div className="flex min-w-0 items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
                                 <p
                                   className={`text-sm font-semibold text-white ${
                                     job.status === 'error' ? 'whitespace-pre-wrap break-words leading-5' : 'truncate'
@@ -4233,13 +4233,13 @@ export default function App() {
                               />
                             </div>
 
-                            <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
-                              <span>{job.stage}</span>
+                            <div className="mt-2 flex min-w-0 items-center justify-between gap-3 text-xs text-gray-400">
+                              <span className="min-w-0 truncate">{job.stage}</span>
                               <span>{Math.round(Number(job.progress || 0))}%</span>
                             </div>
 
                             {job.status === 'error' && job.message ? (
-                              <p className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs leading-5 text-red-100">
+                              <p className="mt-3 overflow-hidden break-words rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-3 text-xs leading-5 text-red-100">
                                 {repairTextEncoding(job.message)}
                               </p>
                             ) : null}
@@ -4268,9 +4268,9 @@ export default function App() {
                             {job.items?.length ? (
                               <div className="mt-3 grid gap-2">
                                 {job.items.slice(0, 4).map((item) => (
-                                  <div key={`${job.id}-${item.index}`} className="rounded-2xl border border-white/5 bg-white/[0.03] px-3 py-2">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <span className="truncate text-xs text-gray-200">{item.title}</span>
+                                  <div key={`${job.id}-${item.index}`} className="min-w-0 overflow-hidden rounded-2xl border border-white/5 bg-white/[0.03] px-3 py-2">
+                                    <div className="flex min-w-0 items-center justify-between gap-3">
+                                      <span className="min-w-0 truncate text-xs text-gray-200" title={item.title}>{item.title}</span>
                                       <span className="text-[10px] text-gray-500">{Math.round(item.progress || 0)}%</span>
                                     </div>
                                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -5286,11 +5286,11 @@ export default function App() {
       ) : null}
 
       {showActivityPanel ? (
-        <div className="fixed bottom-28 right-6 z-40 w-[420px] overflow-hidden rounded-[28px] border border-white/10 bg-[#0b0b0b]/95 shadow-2xl backdrop-blur-2xl">
-          <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-            <div>
+        <div className="fixed bottom-28 right-6 z-40 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-[28px] border border-white/10 bg-[#0b0b0b]/95 shadow-2xl backdrop-blur-2xl">
+          <div className="flex min-w-0 items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Atividade</p>
-              <p className="mt-1 text-sm text-gray-300">Analise, download, playlist e avisos do backend</p>
+              <p className="mt-1 truncate text-sm text-gray-300">Analise, download, playlist e avisos do backend</p>
             </div>
             <button
               onClick={() => setShowActivityPanel(false)}
@@ -5299,7 +5299,7 @@ export default function App() {
               <X size={16} />
             </button>
           </div>
-          <div className="max-h-[380px] overflow-y-auto px-5 py-4">
+          <div className="max-h-[380px] overflow-x-hidden overflow-y-auto px-5 py-4">
             {activityLogs.length === 0 ? (
               <p className="text-sm text-gray-500">Nenhuma atividade registrada ainda.</p>
             ) : (
@@ -5320,14 +5320,14 @@ export default function App() {
                               : 'border-white/5 bg-white/[0.03]';
 
                   return (
-                    <div key={`${entry}-${index}`} className={`rounded-2xl border px-3 py-3 text-xs ${toneClass}`}>
-                      <div className="flex items-center justify-between gap-3">
+                    <div key={`${entry}-${index}`} className={`min-w-0 overflow-hidden rounded-2xl border px-3 py-3 text-xs ${toneClass}`}>
+                      <div className="flex min-w-0 items-center justify-between gap-3">
                         <span className="rounded-full border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-200">
                           {meta.label}
                         </span>
-                        {meta.timestamp ? <span className="text-[10px] text-gray-400">{meta.timestamp}</span> : null}
+                        {meta.timestamp ? <span className="shrink-0 text-[10px] text-gray-400">{meta.timestamp}</span> : null}
                       </div>
-                      <p className="mt-2 whitespace-pre-wrap leading-5 text-gray-200">{meta.message}</p>
+                      <p className="mt-2 whitespace-pre-wrap break-words leading-5 text-gray-200">{meta.message}</p>
                     </div>
                   );
                 })}

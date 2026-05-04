@@ -53,6 +53,7 @@ describe('installer data safety', () => {
     expect(prepareRuntime).toContain('copyBackendRuntime');
     expect(prepareRuntime).toContain("path.join(backendBundleDir, 'dependencies')");
     expect(prepareRuntime).toContain("path.join(bundledModulesDir, 'express')");
+    expect(prepareRuntime).not.toContain("'ffmpeg'\\n  ]");
   });
 
   it('points the Windows service host to bundled backend dependencies', () => {

@@ -25,7 +25,19 @@ let runtimeServicesFactory = null;
 
 function getFfmpegPath() {
   if (!ffmpegPathCache) {
-    ffmpegPathCache = require('@ffmpeg-installer/ffmpeg').path;
+    try {
+      ffmpegPathCache = require('@ffmpeg-installer/ffmpeg').path;
+    } catch (error) {
+      const fallbackCandidates = [
+        path.join(__dirname, 'dependencies', '@ffmpeg-installer', 'win32-x64', 'ffmpeg.exe'),
+        path.join(__dirname, 'node_modules', '@ffmpeg-installer', 'win32-x64', 'ffmpeg.exe')
+      ];
+      ffmpegPathCache = fallbackCandidates.find((candidate) => fs.existsSync(candidate));
+
+      if (!ffmpegPathCache) {
+        throw error;
+      }
+    }
   }
 
   return ffmpegPathCache;
